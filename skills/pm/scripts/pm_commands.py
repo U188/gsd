@@ -18,6 +18,61 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
+    def run_coder_backend(
+        *,
+        backend: str,
+        agent_id: str,
+        message: str,
+        cwd: str,
+        timeout_seconds: int,
+        thinking: str,
+        session_key: str,
+        label: str,
+        bundle: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], dict[str, Any], list[str]]:
+        warnings: list[str] = []
+        normalized = str(backend or "acp").strip() or "acp"
+        if normalized == "acp":
+            try:
+                result = api.spawn_acp_session(
+                    agent_id=agent_id,
+                    message=message,
+                    cwd=cwd,
+                    timeout_seconds=timeout_seconds,
+                    thinking=thinking,
+                    label=label,
+                    session_key=session_key,
+                )
+                side_effects = api.persist_dispatch_side_effects(bundle, result, agent_id=agent_id, runtime="acp")
+                return normalized, result, side_effects, warnings
+            except SystemExit as exc:
+                error_text = str(exc).strip()
+                if "Tool not available: sessions_spawn" not in error_text:
+                    raise
+                warnings.append(
+                    "ACP dispatch unavailable on this OpenClaw build (`sessions_spawn` is not exposed via /tools/invoke); fell back to backend=openclaw."
+                )
+                normalized = "openclaw"
+        if normalized == "codex-cli":
+            result = api.run_codex_cli(
+                agent_id=agent_id,
+                message=message,
+                cwd=cwd,
+                timeout_seconds=timeout_seconds,
+                thinking=thinking,
+            )
+            side_effects = api.persist_run_side_effects(bundle, result)
+            return normalized, result, side_effects, warnings
+        result = api.run_openclaw_agent(
+            agent_id=agent_id,
+            message=message,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            thinking=thinking,
+        )
+        side_effects = api.persist_run_side_effects(bundle, result)
+        return normalized, result, side_effects, warnings
+
     def cmd_auth_link(args: argparse.Namespace) -> int:
         raw = [item.strip() for item in re.split(r"[\s,]+", args.scopes or "") if item.strip()]
         if not raw:
@@ -346,19 +401,20 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 auto_run_reason = "bootstrap_task_created"
                 bundle, coder_context_path = api.build_coder_context(task_id=selected_task_id, task_guid=selected_task_guid)
                 message = api.build_run_message(bundle)
-                run_result = api.spawn_acp_session(
+                resolved_backend, run_result, run_side_effects, run_warnings = run_coder_backend(
+                    backend="acp",
                     agent_id=str(run_args.agent or "codex"),
                     message=message,
                     cwd=str(root),
                     timeout_seconds=int(run_args.timeout or 900),
                     thinking=str(run_args.thinking or "high"),
-                    label=api.build_run_label(root, str(run_args.agent or "codex"), selected_task_id),
                     session_key=str(run_args.session_key or "main"),
+                    label=api.build_run_label(root, str(run_args.agent or "codex"), selected_task_id),
+                    bundle=bundle,
                 )
-                run_side_effects = api.persist_dispatch_side_effects(bundle, run_result, agent_id=str(run_args.agent or "codex"), runtime="acp")
                 run_payload = {
                     "coder_context_path": str(coder_context_path),
-                    "backend": "acp",
+                    "backend": resolved_backend,
                     "agent_id": str(run_args.agent or "codex"),
                     "session_key": str(run_args.session_key or "main"),
                     "timeout": int(run_args.timeout or 900),
@@ -366,6 +422,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                     "message_preview": message[:1200],
                     "result": run_result,
                     "side_effects": run_side_effects,
+                    "warnings": run_warnings,
                 }
                 api.write_pm_bundle("last-run.json", run_payload)
             else:
@@ -514,35 +571,17 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         task = api.resolve_effective_task(bundle)
         task_id = str(task.get("task_id") or "").strip()
         label = api.build_run_label(api.project_root_path(), agent_id, task_id)
-        if backend == "acp":
-            result = api.spawn_acp_session(
-                agent_id=agent_id,
-                message=message,
-                cwd=str(api.project_root_path()),
-                timeout_seconds=timeout_seconds,
-                thinking=thinking,
-                label=label,
-                session_key=session_key,
-            )
-            side_effects = api.persist_dispatch_side_effects(bundle, result, agent_id=agent_id, runtime="acp")
-        elif backend == "codex-cli":
-            result = api.run_codex_cli(
-                agent_id=agent_id,
-                message=message,
-                cwd=str(api.project_root_path()),
-                timeout_seconds=timeout_seconds,
-                thinking=thinking,
-            )
-            side_effects = api.persist_run_side_effects(bundle, result)
-        else:
-            result = api.run_openclaw_agent(
-                agent_id=agent_id,
-                message=message,
-                cwd=str(api.project_root_path()),
-                timeout_seconds=timeout_seconds,
-                thinking=thinking,
-            )
-            side_effects = api.persist_run_side_effects(bundle, result)
+        backend, result, side_effects, backend_warnings = run_coder_backend(
+            backend=backend,
+            agent_id=agent_id,
+            message=message,
+            cwd=str(api.project_root_path()),
+            timeout_seconds=timeout_seconds,
+            thinking=thinking,
+            session_key=session_key,
+            label=label,
+            bundle=bundle,
+        )
         payload = {
             "coder_context_path": str(path),
             "backend": backend,
@@ -553,6 +592,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             "message_preview": message[:1200],
             "result": result,
             "side_effects": side_effects,
+            "warnings": backend_warnings,
         }
         api.write_pm_bundle("last-run.json", payload)
         return emit(payload)
