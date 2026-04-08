@@ -15,6 +15,18 @@ def build_parser(*, handlers: dict[str, Any]) -> argparse.ArgumentParser:
     auth_link.add_argument("--token-type", default="user", choices=["user", "tenant"])
     auth_link.set_defaults(func=handlers["auth_link"])
 
+    permission_bundle = sub.add_parser("permission-bundle")
+    permission_bundle.add_argument("--preset", action="append", default=[])
+    permission_bundle.add_argument("--scope", action="append", default=[])
+    permission_bundle.add_argument("--token-type", default="tenant", choices=["user", "tenant"])
+    permission_bundle.add_argument("--list-presets", action="store_true", default=False)
+    permission_bundle.set_defaults(func=handlers["permission_bundle"])
+
+    auth = sub.add_parser("auth")
+    auth.add_argument("--no-group-open-reply", action="store_true", default=False)
+    auth.add_argument("--no-attachment-oauth", action="store_true", default=False)
+    auth.set_defaults(func=handlers["auth"])
+
     init = sub.add_parser(
         "init",
         help="Bind or create PM resources for a project",
@@ -49,6 +61,7 @@ def build_parser(*, handlers: dict[str, Any]) -> argparse.ArgumentParser:
     init.add_argument("--skill", action="append", default=[])
     init.add_argument("--allow-agent", action="append", default=[])
     init.add_argument("--model-primary", default="")
+    init.add_argument("--no-auth-bundle", action="store_true", default=False)
     init.add_argument("--force", action="store_true", default=False)
     init.add_argument("--replace-binding", action="store_true", default=False)
     init.add_argument("--dry-run", action="store_true", default=False)
@@ -86,6 +99,7 @@ def build_parser(*, handlers: dict[str, Any]) -> argparse.ArgumentParser:
     workspace_init.add_argument("--skill", action="append", default=[])
     workspace_init.add_argument("--allow-agent", action="append", default=[])
     workspace_init.add_argument("--model-primary", default="")
+    workspace_init.add_argument("--no-auth-bundle", action="store_true", default=False)
     workspace_init.add_argument("--force", action="store_true", default=False)
     workspace_init.add_argument("--replace-binding", action="store_true", default=False)
     workspace_init.add_argument("--dry-run", action="store_true", default=False)

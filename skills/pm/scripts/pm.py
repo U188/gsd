@@ -15,9 +15,13 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from pm_auth import build_auth_link as build_pm_auth_link
+from pm_auth import build_auth_bundle as build_pm_auth_bundle
+from pm_auth import build_permission_bundle as build_pm_permission_bundle
+from pm_auth import DEFAULT_BOT_AUTH_COMMANDS
 from pm_auth import ensure_attachment_token as ensure_pm_attachment_token
 from pm_auth import feishu_credentials as load_feishu_credentials
 from pm_auth import get_channel_app_info as get_pm_channel_app_info
+from pm_auth import list_app_scope_presets as list_pm_app_scope_presets
 from pm_auth import openclaw_config as load_openclaw_config
 from pm_auth import request_json as auth_request_json
 from pm_auth import request_user_oauth_link as request_pm_user_oauth_link
@@ -178,6 +182,41 @@ def get_channel_app_info() -> dict[str, str]:
 
 def build_auth_link(*, scopes: list[str], token_type: str = 'user') -> dict[str, Any]:
     return build_pm_auth_link(find_openclaw_config_path, scopes=scopes, token_type=token_type)
+
+
+def list_app_scope_presets() -> dict[str, dict[str, Any]]:
+    return list_pm_app_scope_presets()
+
+
+def build_permission_bundle(*, preset_names: list[str], scopes: list[str], token_type: str = "tenant") -> dict[str, Any]:
+    return build_pm_permission_bundle(
+        find_openclaw_config_path,
+        preset_names=preset_names,
+        scopes=scopes,
+        token_type=token_type,
+    )
+
+
+def build_auth_bundle(
+    *,
+    include_group_open_reply: bool = True,
+    include_attachment_oauth: bool = True,
+    explicit_openclaw_config: str = "",
+) -> dict[str, Any]:
+    oauth_scopes = DEFAULT_ATTACHMENT_SCOPES if include_attachment_oauth else ()
+    if explicit_openclaw_config:
+        config_path = Path(explicit_openclaw_config).expanduser().resolve()
+
+        def find_config() -> Path | None:
+            return config_path
+    else:
+        find_config = find_openclaw_config_path
+    return build_pm_auth_bundle(
+        find_config,
+        include_group_open_reply=include_group_open_reply,
+        user_oauth_scopes=oauth_scopes,
+        bot_auth_commands=DEFAULT_BOT_AUTH_COMMANDS,
+    )
 
 
 def request_user_oauth_link(*, scopes: list[str]) -> dict[str, Any]:
@@ -1462,7 +1501,9 @@ def build_cli_api() -> SimpleNamespace:
     return SimpleNamespace(
         ACTIVE_CONFIG=ACTIVE_CONFIG,
         attachment_auth_result=attachment_auth_result,
+        build_auth_bundle=build_auth_bundle,
         build_auth_link=build_auth_link,
+        build_permission_bundle=build_permission_bundle,
         build_coder_context=build_coder_context,
         build_completion_comment=build_completion_comment,
         build_context_payload=build_context_payload,
@@ -1492,6 +1533,7 @@ def build_cli_api() -> SimpleNamespace:
         get_task_record=get_task_record,
         get_task_record_by_guid=get_task_record_by_guid,
         inspect_tasklist=inspect_tasklist,
+        list_app_scope_presets=list_app_scope_presets,
         list_task_comments=list_task_comments,
         list_task_attachments=list_task_attachments,
         load_config=load_config,

@@ -247,10 +247,17 @@ def scaffold_workspace(
     force: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
+    workspace_exists = output.exists()
+    workspace_non_empty = False
+    if workspace_exists:
+        try:
+            workspace_non_empty = any(output.iterdir())
+        except OSError:
+            workspace_non_empty = False
     if output.exists() and force:
         if not dry_run:
             shutil.rmtree(output)
-    elif output.exists() and any(output.iterdir()):
+    elif workspace_exists and workspace_non_empty and not dry_run:
         raise SystemExit(f"workspace already exists and is not empty: {output}")
 
     task_backend = profile["taskBackend"]
@@ -298,6 +305,9 @@ def scaffold_workspace(
         ]
         return {
             "workspace_root": str(output),
+            "workspace_exists": workspace_exists,
+            "workspace_non_empty": workspace_non_empty,
+            "would_replace_existing": bool(force and workspace_exists),
             "template_root": str(template_root),
             "template_root_exists": template_root.exists(),
             "generated_files": sorted(str(path) for path in preview_files),

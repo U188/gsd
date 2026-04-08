@@ -27,7 +27,11 @@ def _dedupe_paths(paths: list[Path]) -> list[Path]:
 
 def _openclaw_config_candidates() -> tuple[Path, ...]:
     home = Path.home()
-    candidates: list[Path] = [Path.cwd() / "openclaw.json"]
+    candidates: list[Path] = []
+    explicit_config = str(os.environ.get("OPENCLAW_CONFIG") or "").strip()
+    if explicit_config:
+        candidates.append(Path(explicit_config).expanduser())
+    candidates.append(Path.cwd() / "openclaw.json")
     openclaw_home = str(os.environ.get("OPENCLAW_HOME") or "").strip()
     if openclaw_home:
         candidates.append(Path(openclaw_home).expanduser() / "openclaw.json")
@@ -187,6 +191,9 @@ def pm_file(name: str, explicit_repo_root: str = "") -> Path:
 
 def find_openclaw_config_path() -> Path | None:
     candidates: list[Path] = []
+    explicit_config = str(os.environ.get("OPENCLAW_CONFIG") or "").strip()
+    if explicit_config:
+        candidates.append(Path(explicit_config).expanduser())
     root = project_root_path() if "repo_root" in ACTIVE_CONFIG else Path.cwd()
     for parent in [root, *root.parents]:
         candidates.append(parent / "openclaw.json")

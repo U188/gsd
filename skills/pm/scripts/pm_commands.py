@@ -28,6 +28,23 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             payload = api.build_auth_link(scopes=raw, token_type=args.token_type)
         return emit(payload)
 
+    def cmd_permission_bundle(args: argparse.Namespace) -> int:
+        if args.list_presets:
+            return emit({"presets": api.list_app_scope_presets()})
+        payload = api.build_permission_bundle(
+            preset_names=list(args.preset or []),
+            scopes=list(args.scope or []),
+            token_type=args.token_type,
+        )
+        return emit(payload)
+
+    def cmd_auth(args: argparse.Namespace) -> int:
+        payload = api.build_auth_bundle(
+            include_group_open_reply=not bool(args.no_group_open_reply),
+            include_attachment_oauth=not bool(args.no_attachment_oauth),
+        )
+        return emit(payload)
+
     def current_task_cfg() -> dict[str, Any]:
         value = api.ACTIVE_CONFIG.get("task")
         return value if isinstance(value, dict) else {}
@@ -150,6 +167,14 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             if configured_doc_folder_token:
                 api.ACTIVE_CONFIG["doc"]["folder_token"] = configured_doc_folder_token
 
+        resolved_task_backend = str(args.task_backend or current_task_backend()).strip() or "feishu"
+        resolved_doc_backend = str(args.doc_backend or current_doc_backend()).strip() or "feishu"
+        auth_bundle = None if args.no_auth_bundle else api.build_auth_bundle(
+            include_group_open_reply=True,
+            include_attachment_oauth=True,
+            explicit_openclaw_config=str(args.openclaw_config or "").strip(),
+        )
+
         workspace_bootstrap = None
         if group_id:
             openclaw_config_path = api.resolve_openclaw_config_path(args.openclaw_config)
@@ -201,9 +226,6 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 "scaffold": scaffold_result,
                 "registration": register_result,
             }
-
-        resolved_task_backend = str(args.task_backend or current_task_backend()).strip() or "feishu"
-        resolved_doc_backend = str(args.doc_backend or current_doc_backend()).strip() or "feishu"
         api.ACTIVE_CONFIG.setdefault("task", {})
         if isinstance(api.ACTIVE_CONFIG.get("task"), dict):
             api.ACTIVE_CONFIG["task"]["backend"] = resolved_task_backend
@@ -278,6 +300,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                     "tasklist_inspection": task_inspection,
                     "docs_preview": docs_preview,
                     "workspace_bootstrap": workspace_bootstrap,
+                    "auth_bundle": auth_bundle,
                     "config_preview": config_payload,
                 }
             )
@@ -374,6 +397,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 "doc_index": payload.get("doc_index") or {},
                 "gsd": payload.get("gsd") or {},
                 "workspace_bootstrap": workspace_bootstrap,
+                "auth_bundle": auth_bundle,
             }
         )
 
@@ -784,7 +808,9 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         return emit(result)
 
     return {
+        "auth": cmd_auth,
         "auth_link": cmd_auth_link,
+        "permission_bundle": cmd_permission_bundle,
         "init": cmd_init,
         "sync_gsd_docs": cmd_sync_gsd_docs,
         "sync_gsd_progress": cmd_sync_gsd_progress,

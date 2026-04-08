@@ -5,7 +5,10 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # Python 3.8 fallback
+    from backports.zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_DIR_ENV_VARS = ("PM_STATE_DIR", "OPENCLAW_PM_STATE_DIR")

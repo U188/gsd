@@ -74,9 +74,16 @@ python3 skills/pm/scripts/pm.py context --refresh
 这套仓库建议分两档理解：
 
 - 本地优先模式：先验证 `pm` / `coder` / GSD 路由、安装步骤、文档和脚本是否一致，不依赖真实 Feishu
-- 集成模式：再把仓库内容接入真实 OpenClaw 实例，并按需启用 Feishu 绑定和 `acp-progress-bridge`
+- 集成模式：再把仓库内容按职责分别接入 Codex 和 OpenClaw，并按需启用 Feishu 绑定和 `acp-progress-bridge`
 
 这两个模式不是互斥关系，而是推荐顺序。先做本地验证，再接外部依赖，排错成本最低。
+
+默认部署边界：
+
+- `skills/pm`、`skills/coder`、`skills/openclaw-lark-bridge` 默认放到 Codex skills 目录
+- `plugins/acp-progress-bridge` 放到 OpenClaw workspace 的 plugins 目录
+- 只有当 OpenClaw front agent 需要直接加载 repo skills 时，才额外把 `pm` / `coder` 复制到 OpenClaw workspace
+- `skills/openclaw-lark-bridge` 不作为默认 OpenClaw workspace 资产
 
 ## 角色边界
 
@@ -109,12 +116,29 @@ python3 skills/pm/scripts/pm.py context --refresh
 
 ## 快速入口
 
-建议按这个顺序进入：
+如果你只是先验证 repo 本身，建议按这个顺序进入：
 
 1. 看 [INSTALL.md](./INSTALL.md)
 2. 本地先跑 `python3 skills/pm/scripts/pm.py init --project-name demo --dry-run`
 3. 再跑 `python3 skills/pm/scripts/pm.py context --refresh`
 4. 最后用 `python3 skills/pm/scripts/pm.py route-gsd --repo-root .`
+
+如果你要做完整安装，不要把上面这组 repo-local 检查当成全部顺序。更合适的 operator 路径是：
+
+1. 先装好运行时和缺失依赖
+2. 先把 `pm` / `coder` / `openclaw-lark-bridge` 部署到 Codex，把 `acp-progress-bridge` 部署到 OpenClaw
+3. 先写好 `openclaw.json` / `pm.json`
+4. 如果目标包含 Feishu，先把 bot / 群 / 权限 / `openclaw-lark` 准备好
+5. 再回头跑 smoke、runtime 验证和真实 backend 初始化
+
+可以直接记成 6 步：
+
+1. 装基础运行时
+2. 并行准备 Feishu 前置
+3. 部署 Codex / OpenClaw 资产
+4. 写 `openclaw.json` / `pm.json`
+5. 跑 smoke / runtime 验证
+6. 最后才做真实 backend 的 `pm init` 和 E2E
 
 如果你要先走完全本地模式，推荐把 `pm.json` 配成：
 
@@ -167,9 +191,9 @@ openclaw-pm-coder-kit/
 
 目录职责：
 
-- `skills/pm`：任务编排 front door、文档同步、上下文组织、GSD 路由
-- `skills/coder`：canonical execution worker，负责 ACP coding session 的 dispatch / continue / observe / execution
-- `skills/openclaw-lark-bridge`：repo 内 Feishu bridge script，复用 OpenClaw Gateway 里已加载的 `openclaw-lark` 工具
+- `skills/pm`：默认部署到 Codex 的任务编排 front door、文档同步、上下文组织、GSD 路由
+- `skills/coder`：默认部署到 Codex 的 canonical execution worker，负责 ACP coding session 的 dispatch / continue / observe / execution
+- `skills/openclaw-lark-bridge`：默认部署到 Codex 的 Feishu bridge skill，复用 OpenClaw Gateway 里已加载的 `openclaw-lark` 工具
 - `plugins/acp-progress-bridge`：progress relay，把子会话进度和完成结果回推到父会话
 - `examples/`：最小配置与增强配置片段
 - `tests/`：repo-local unittest 基线，优先覆盖新抽象 seam

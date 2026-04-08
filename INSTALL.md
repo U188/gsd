@@ -1,71 +1,81 @@
 # 安装说明
 
-## 目录
+这份文档只保留一条可执行的安装主线。
 
-1. AI 主流程
-2. 实操前注意点
-3. Step 0: 环境检查与缺失安装
-4. Step 1: 本地无鉴权验证
-5. Step 2: 接入 OpenClaw 实例
-6. Step 3: Feishu / bridge / OAuth
-7. 配置片段说明
-8. 验证矩阵
-9. 端到端验收示例
-10. AI 安装验收清单
-11. 常见问题
-12. Bridge 调试路径
-13. 运行态目录说明
+如果你只是想先验证仓库可用，先做 Step 0 和 Step 1，不要一开始就接 Feishu。
 
-## AI 唯一主流程
+相关资料：
 
-如果这份文档是给 AI 安装代理执行，只推荐按下面这一条主路径，不要自己换顺序：
+- 仓库介绍与角色边界：`README.md`
+- 最小 PM 配置示例：`examples/pm.json.example`
+- OpenClaw 配置片段：`examples/openclaw.json5.snippets.md`
 
-1. 先检查环境里是否已经有 `python3`、`node`、`openclaw`、`codex`、`cc`、`gsd-tools`。
-2. 再检查 OpenClaw 里是否已经装好并加载 `openclaw-lark` Feishu 插件。
-3. 如果缺失，就先安装缺失项，不要先改配置。
-4. 如果要接 Feishu，先确认用户是否已经准备好：
-   - Feishu app
-   - `appId`
-   - `appSecret`
-   - 群聊
-   - 需要的 task / attachment 权限
-5. 如果用户要飞书群协作，让用户先创建群，再把 `group_id` 配进去。
-6. 如果权限还没完成，就先生成授权链接，让用户完成授权。
-7. 然后把本仓库里的 skills / plugins 复制到目标 OpenClaw workspace / Codex 目录。
-8. 再配置 `openclaw.json`、`pm.json`、`acp/acpx`、`bindings/channels`、`acp-progress-bridge`。
-9. 再选一个真实项目做 `pm init`。
-10. 最后做端到端测试：
-   - 创建任务
-   - 派给 Codex
-   - 观察 bridge 进度
-   - Codex 完成
-   - 任务状态/评论/附件/汇报都落回去
+## 0. 完整安装 Checklist
 
-这个顺序里最关键的原则：
+如果你的目标不是“只验证 repo 能跑”，而是把整套链路真实装起来，先按这 6 步走：
 
-- 缺依赖先安装，不要先改配置
-- `cc` 不是必需前置，但要把“已安装 / 未安装”记录清楚
-- 缺权限先授权，不要先做 Feishu 写操作
-- skills/plugins 先复制，再 reload OpenClaw
-- front agent 先确认，再派发 Codex
-- 最后才做端到端任务验收
+1. 先装基础运行时：`python3 >= 3.9`、`node >= 22`、`openclaw = 2026.3.22`、`codex`、`gsd-tools`；如果要 ACP / bridge，再装 `acpx`
+2. 如果目标包含 Feishu，这一步就并行准备：安装 `@larksuite/openclaw-lark`、写 `channels.feishu`、准备飞书 app / bot / 群 / 权限、让用户完成 `/auth`；如果要附件上传，再补 attachment OAuth
+3. 部署仓库资产：`skills/pm`、`skills/coder`、`skills/openclaw-lark-bridge` 放到 Codex；`plugins/acp-progress-bridge` 放到 OpenClaw；只有 front agent 直接依赖 repo skills 时，才把 `pm/coder` 额外复制到 OpenClaw
+4. 写配置：先把 `openclaw.json` 和 `pm.json` 配好
+5. 再跑 smoke / runtime 验证：这时再跑 `py_compile`、`context --refresh`、`route-gsd`、`openclaw agents list --bindings`、`openclaw plugins list`
+6. 最后才做真实 backend 的 `init` 和 E2E；如果是 Feishu backend，必须等 bot / 群 / 权限都 ready 之后再跑真实 `pm init`
 
-## 实操前注意点
+### 0.1 这些步骤必须用户手动完成
 
-- AI 先输出环境检查结果，再开始安装，不要边查边改
-- 能先走 `local/repo` backend 就先走，Feishu 放到后半段接入
-- `front agent` 和 `ACP worker` 是两回事，不要把 `codex` 直接当成 front agent
-- `skills/openclaw-lark-bridge` 是 skill 层，`plugins/acp-progress-bridge` 是 plugin 层，不要混放
-- 要接 Feishu 时，先确认 `openclaw-lark`、`channels.feishu`、群、OAuth，再做写操作
-- 这套链路默认按“环境检查 -> 本地 smoke -> OpenClaw 接入 -> Feishu/bridge/OAuth -> E2E 验收”推进
+下面这些动作，AI 最多只能帮你生成链接、命令和导入 JSON，不能替你点完：
 
-## Step 0: 环境检查与缺失安装
+1. 运行 `@larksuite/openclaw-lark` 的交互式安装流程，并在需要时扫码或确认 App 信息
+2. 在飞书开放平台确认新增应用权限，并发布应用版本
+3. 在飞书里私聊机器人或目标群里执行 `/auth` 或 `/feishu auth`
+4. 在真实群里发消息验证“不用 @ 也回复”是否已经生效
 
-这一节只做两件事：确认环境里有没有关键命令；缺什么就先补什么。
+也就是说，AI 可以把授权入口一次性整理好，但最后的人机确认动作还是要你自己点。
 
-### 0.1 先检查 CLI 是否存在
+## 1. 安装策略
 
-最少检查下面 6 个入口：
+这份仓库实际上有两条入口：
+
+1. 只验证仓库是否可跑
+2. 真的要把整套链路装到 Codex / OpenClaw / Feishu
+
+如果你只是做 repo 验证，推荐按下面顺序推进：
+
+1. 先检查运行时和版本。
+2. 先跑 repo-local smoke。
+3. 再按需接入 Codex / OpenClaw。
+4. 最后按需接 Feishu、OAuth 和 progress bridge。
+
+如果你要做完整安装，推荐顺序改成：
+
+1. 先检查并补齐运行时。
+2. 如果目标包含 Feishu，让用户并行准备 app / bot / 群 / 权限，同时安装 `openclaw-lark`。
+3. 先把仓库资产部署到 Codex / OpenClaw，并写好 `openclaw.json` / `pm.json`。
+4. 再跑 smoke 和 runtime 验证。
+5. 最后才做真实 Feishu backend 的 `init`、任务流和 E2E。
+
+关键原则：
+
+- 默认先走 `local/repo` backend，再接真实 Feishu。
+- 先补依赖，再改配置。
+- `front agent` 和 ACP worker 不是一回事，不要把 `codex` 直接当成 front agent。
+- `cc` 不是必需前置，但要记录是否已安装。
+- `openclaw` 默认基线固定为 `2026.3.22`，不要默认升级到 `2026.4.5+`。
+- 如果目标包含 Feishu，用户侧创建 app / bot / 群 / 权限申请要和机器侧安装并行进行。
+
+推荐把安装任务拆成三档：
+
+| 档位 | 目标 | 是否需要 Feishu |
+|------|------|----------------|
+| 本地验证 | 证明 `pm` / `coder` / GSD 路由可启动 | 否 |
+| OpenClaw 接入 | 证明 skill / plugin / agent 配置生效 | 否 |
+| 完整集成 | 证明 task/doc/OAuth/bridge 能跑通 | 是 |
+
+## 2. Step 0：环境检查
+
+### 2.1 必查命令
+
+最少检查：
 
 - `python3`
 - `node`
@@ -83,98 +93,122 @@ which openclaw
 which codex
 which cc
 which gsd-tools
+python3 --version
+node -v
+openclaw -v
 ```
 
-Windows CMD / PowerShell:
+Windows PowerShell:
 
 ```powershell
-where python3
-where node
-where openclaw
-where codex
-where cc
-where gsd-tools
+Get-Command python3
+Get-Command node
+Get-Command openclaw
+Get-Command codex
+Get-Command cc
+Get-Command gsd-tools
+python3 --version
+node -v
+openclaw -v
 ```
 
-如果 `cc` 不存在，不阻塞这套仓库安装；但 AI 需要在交付结果里明确写出“未安装 Claude Code，仅验证了 Codex 路径”。
+版本基线：
 
-### 0.2 缺失时优先补哪几项
+- Python `>= 3.9`
+- Node.js `>= 22`
+- OpenClaw `= 2026.3.22`
 
-GSD 不是本仓库内置的一部分。当前 `skills/pm/scripts/pm_gsd.py` 会按下面的顺序找它：
+注意：
 
-1. `GSD_TOOLS_PATH` / `GSD_TOOLS_BIN`
-2. PATH 里的 `gsd-tools`
-3. `CODEX_HOME/get-shit-done/bin/gsd-tools.cjs`
-4. `~/.codex/get-shit-done/bin/gsd-tools.cjs`
+- 不能只看“机器上有更高版本 Python”；真正执行 `pm.py` 的 `python3` 必须满足 `>= 3.9`
+- 如果机器上同时有 3.8 和 3.12，建议把登录环境里的默认 `python3` 前置到 3.12
+- 这次远端验证机实际用的是 `~/.local/bin/python3 -> /usr/local/bin/python3.12`
+- 如果 `cc` 不存在，不阻塞本仓库安装，但交付里要明确写出“仅验证了 Codex 路径”
 
-如果你要让 `route-gsd`、`plan-phase`、`materialize-gsd-tasks` 正常工作，先安装 GSD。
+### 2.2 缺失时优先补什么
 
-推荐来源：
+#### GSD
 
-- GitHub: `https://github.com/gsd-build/get-shit-done`
-
-推荐安装方式：
+如果要让 `route-gsd`、`plan-phase`、`materialize-gsd-tasks` 正常工作，先安装 GSD：
 
 ```bash
 npx get-shit-done-cc@latest --codex --global
-```
-
-安装完成后，Codex 全局目录通常会出现：
-
-```text
-~/.codex/get-shit-done/
-```
-
-验证方法：
-
-```bash
 node ~/.codex/get-shit-done/bin/gsd-tools.cjs --help
 ```
 
-以及在 Codex 会话里验证：
-
-```text
-$gsd-help
-```
-
-如果不是安装到默认目录，就显式设置：
+如果不是默认安装路径，显式设置：
 
 ```bash
 export GSD_TOOLS_PATH=/abs/path/to/gsd-tools.cjs
 ```
 
-OpenClaw Feishu 插件不是本仓库自带代码，而是运行时 npm 插件。当前本机实际使用的是：
+#### ACPX
 
-```text
-@larksuite/openclaw-lark
-```
+如果你准备启用：
 
-如果要接 Feishu，先安装：
+- `acp.backend = "acpx"`
+- ACP 子会话派发
+- `acp-progress-bridge`
 
-```bash
-openclaw plugins install @larksuite/openclaw-lark
-```
-
-再验证：
+就先安装 `acpx` CLI：
 
 ```bash
-openclaw plugins info openclaw-lark
+npm install -g acpx@latest
+acpx --help
+```
+
+注意：
+
+- `acpx` CLI 装好了，不代表旧的 `openclaw.json` 插件配置一定合法
+- 如果 `openclaw config validate` 仍报 `plugin not found`，优先修配置，而不是重复安装 CLI
+
+#### Feishu 插件
+
+Feishu 集成依赖运行时插件 `@larksuite/openclaw-lark`，不是本仓库自带代码。
+
+最小检查与安装顺序：
+
+```bash
 openclaw plugins list
+openclaw plugins info openclaw-lark
+openclaw plugins install @larksuite/openclaw-lark
+openclaw gateway restart
 ```
 
-### 0.3 跨平台路径注意点
+验收标准不是“记住某个包名”，而是：
 
-这套仓库按“环境变量覆盖 -> PATH -> 平台候选目录”顺序查找运行时入口。
+- `openclaw plugins info openclaw-lark` 显示 `Status: loaded`
+- 插件工具面可用
 
-| 目标 | macOS / Linux | Windows CMD / PowerShell |
-|-----|------|---------|
-| 检查 Python | `which python3` | `where python3` / `Get-Command python3` |
-| 检查 OpenClaw CLI | `which openclaw` | `where openclaw` / `Get-Command openclaw` |
-| 检查 Codex CLI | `which codex` | `where codex` / `Get-Command codex` |
-| 检查 Claude Code CLI | `which cc` | `where cc` / `Get-Command cc` |
-| 检查 Node | `which node` | `where node` / `Get-Command node` |
+补充一个运行态约束：
 
-如果命令不在 PATH，可以显式设置：
+- 如果你已经启用了 `openclaw-lark`，通常不要再把内置 `plugins.entries.feishu.enabled` 打开
+- 两套 Feishu 工具同时注册时，可能出现 `plugin tool name conflict (openclaw-lark): feishu_chat`
+- 在远端真实环境里，这种双注册还可能把 `openclaw plugins list` 顶到 Node OOM
+
+### 2.3 如果目标包含 Feishu，立刻并行准备
+
+不要等本地 smoke 全跑完才让用户去准备 Feishu。
+
+用户侧应并行完成：
+
+1. 创建飞书应用
+2. 开启 Bot 能力
+3. 准备 `appId` / `appSecret`
+4. 创建目标群
+5. 申请 task / attachment / doc 相关权限
+
+这里的预期是 OAuth 授权链接或卡片，不是 OpenClaw pairing 二维码。
+
+### 2.4 路径约定
+
+这套仓库按下面顺序查找运行时入口：
+
+1. 显式环境变量覆盖
+2. `PATH`
+3. 平台候选目录
+
+常见覆盖项：
 
 - `OPENCLAW_BIN`
 - `CODEX_BIN`
@@ -185,39 +219,30 @@ openclaw plugins list
 - `PM_WORKSPACE_ROOT`
 - `PM_WORKSPACE_TEMPLATE_ROOT`
 
-Windows 额外提醒：
-
-- `openclaw.json`、`pm.json` 里的路径尽量写成 `C:/...`
-- 如果一定要用反斜杠，必须双写成 `C:\\...`
-- `where openclaw`、`where codex`、`where node` 的结果要记录进安装报告
-- `PM_STATE_DIR` 在 Windows 下通常落到 `%LOCALAPPDATA%\\OpenClawPMCoder\\state`
-
-路径写法建议：
-
-- macOS / Linux: `/abs/path/to/workspace`
-- Windows JSON: `C:\\path\\to\\workspace`
-- Windows 也可以在很多场景里直接写成 `C:/path/to/workspace`
-
-如果你想先完全脱离 Feishu，最小 `pm.json` 建议显式写：
-
-```json
-{
-  "task": { "backend": "local", "tasklist_name": "demo", "prefix": "T", "kind": "task" },
-  "doc": { "backend": "repo", "folder_name": "demo" }
-}
-```
-
-也可以在初始化时直接指定：
+如果一台机器上同时有多个 OpenClaw profile，建议显式设置：
 
 ```bash
-python3 skills/pm/scripts/pm.py init --project-name demo --task-backend local --doc-backend repo --dry-run
+export OPENCLAW_CONFIG=/abs/path/to/real/openclaw.json
 ```
 
-## Step 1: 本地无鉴权验证
+不要依赖 repo 根目录里的占位 `openclaw.json` 自动猜。
 
-这一步只在当前仓库里执行，不要求你已经完成 OpenClaw 或 Feishu 接入。
+这次远端验证机实际使用的是：
 
-### 1.1 Python 语法与 CLI 基本检查
+```bash
+export OPENCLAW_CONFIG=/home/openclaw/.openclaw-pm-coder-kit/openclaw.json
+```
+
+路径建议：
+
+- macOS / Linux：`/abs/path/to/workspace`
+- Windows JSON：`C:/path/to/workspace` 或 `C:\\path\\to\\workspace`
+
+## 3. Step 1：本地无鉴权验证
+
+这一段只验证仓库本身，不要求你已经接入 OpenClaw 或 Feishu。
+
+### 3.1 CLI 与语法检查
 
 ```bash
 python3 -m py_compile skills/pm/scripts/*.py skills/coder/scripts/*.py skills/openclaw-lark-bridge/scripts/*.py
@@ -227,157 +252,69 @@ python3 skills/coder/scripts/observe_acp_session.py --help
 python3 skills/openclaw-lark-bridge/scripts/invoke_openclaw_tool.py --help
 ```
 
-这些命令分别验证：
-
-- Python 文件至少通过语法检查
-- `pm` 主入口可启动
-- `context` 子命令存在
-- coder observer 可启动
-- repo 内 Feishu bridge script 可启动
-
-AI 在这一步应该记录：
+至少记录：
 
 - `python3` 路径
 - `node` 路径
 - `openclaw` 路径
 - `codex` 路径
-- 如果某个命令不存在，属于哪一类缺失
 
-### 1.2 先跑 `pm init --dry-run`
-
-本地 bootstrap 的首个官方入口是：
+### 3.2 先跑 `pm init --dry-run`
 
 ```bash
 python3 skills/pm/scripts/pm.py init --project-name demo --dry-run
 ```
 
-如果项目名包含中文或其他非 ASCII 字符，补上 `--english-name`：
+如果项目名包含中文或其他非 ASCII 字符：
 
 ```bash
 python3 skills/pm/scripts/pm.py init --project-name "测试项目" --english-name demo --dry-run
 ```
 
-如果省略了 `--english-name`，当前实现会直接报错：
+重点看：
 
-```text
-english name is required when project name contains non-ASCII characters
-```
+- `status: "dry_run"`
+- `config_preview`
+- `workspace_bootstrap`
 
-如何理解 dry-run 输出：
+说明：
 
-- `status: "dry_run"`：说明当前只是预演，不会真正写入外部资源
-- `config_preview`：说明将要写入的 PM 配置形状
-- `workspace_bootstrap: null`：在没有传 `--group-id` 时这是预期结果，不是失败
+- 这一段只是在验证 repo-local CLI 形状，不等于你已经完成了真实安装
+- 不传 `--group-id` 时，`workspace_bootstrap: null` 是预期行为
+- 非 ASCII 项目名未传 `--english-name` 会直接报错
 
-AI 在这一步应该额外检查：
-
-- `config_preview.task.backend`
-- `config_preview.doc.backend`
-- `config_preview.project.name`
-- 如果项目名非 ASCII，是否已经显式补了 `--english-name`
-
-### 1.3 刷新上下文并检查 GSD 路由
+### 3.3 刷新上下文并验证 GSD 路由
 
 ```bash
 python3 skills/pm/scripts/pm.py context --refresh
 python3 skills/pm/scripts/pm.py route-gsd --repo-root .
 ```
 
-使用方式：
-
-- `context --refresh` 用来刷新 repo 扫描、PM 当前配置、GSD 文档状态
-- `route-gsd` 用来确认当前 phase 下一步应该走 `plan-phase`、执行、还是其他动作
-
-AI 在这一步至少要留存这些 evidence：
+至少保留这些 evidence：
 
 - `.pm/current-context.json`
 - `.pm/bootstrap.json`
 - `.pm/doc-index.json`
 - `route-gsd` 输出里的 `runtime.ready`
 
-在这个仓库当前状态下，Phase 3 已经完成 planning，所以 `route-gsd` 会把下一步指向执行侧。
-
-命令职责可以这样记：
-
-- `route-gsd`：判断当前 phase 下一步该做什么
-- `plan-phase`：产出或刷新 phase plan
-- `materialize-gsd-tasks`：把 phase plan 同步成 task backend 里的 tracked tasks
-
-如果你当前只是想在本地把 phase 做完，不需要先跑 `materialize-gsd-tasks`。
-
-### 1.4 PM/GSD product surface 验证
-
-把这三类检查分开理解：
-
-**本地无鉴权：**
-
-```bash
-python3 skills/pm/scripts/pm.py route-gsd --repo-root .
-```
-
-你应该重点看：
-
-- `route`
-- `reason`
-- `runtime.ready`
-- `runtime.issues`
-
-如果这里已经出现：
+如果 `route-gsd` 已经报：
 
 - `gsd-tools not found`
 - `node not found`
 
-先修运行时，再谈 `plan-phase`。
+就先修运行时，不要继续谈 `plan-phase`。
 
-AI 不应在这里直接尝试“自动安装所有东西”。先判断：
+### 3.4 repo-local smoke 建议口径
 
-- 缺的是 `node`
-- 缺的是 `gsd-tools`
-- 还是 `pm.json` / `.planning` 本身不完整
-
-**宿主 runtime：**
+如果你只是要证明仓库本地可用，这一组命令已经够用：
 
 ```bash
-openclaw agents list --bindings
+python3 skills/pm/scripts/pm.py init --project-name demo --task-backend local --doc-backend repo --dry-run
+python3 skills/pm/scripts/pm.py context --refresh
+python3 skills/pm/scripts/pm.py route-gsd --repo-root .
 ```
 
-这一步是为了确认真正存在的 front agent。只有这一步通过以后，再谈：
-
-```bash
-python3 skills/pm/scripts/pm.py plan-phase --repo-root . --phase 5 --no-doc-sync --no-progress-sync --no-state-append
-```
-
-这里的边界要记清楚：
-
-- `plan-phase` 不是纯本地无鉴权 smoke
-- 它依赖真实 OpenClaw front agent
-- `codex` 可以是 ACP worker，但不等于它一定是 front agent
-
-如果你看到 `Unknown agent id`，优先怀疑：
-
-- 传错了 front agent
-- `project.agent` 没配置成真实可见 agent
-- 你把 ACP worker 和 front agent 混成了一个概念
-
-**真实 backend：**
-
-```bash
-python3 skills/pm/scripts/pm.py materialize-gsd-tasks --repo-root . --phase 5
-```
-
-这一步是在验证当前 task backend 写入链路：
-
-- 如果 `task.backend = "local"`，结果会写到 `.pm/local-tasks.json`
-- 如果 `task.backend = "feishu"`，结果会写到真实 Feishu task backend
-
-在 `local` backend 下，下面这类命令也已经能走通：
-
-```bash
-python3 skills/pm/scripts/pm.py upload-attachments --task-id T1 --file ./evidence.txt
-python3 skills/pm/scripts/pm.py complete --task-id T1 --content "done locally"
-```
-
-AI 如果要证明 repo-local 真的可用，建议把这一组命令作为 smoke evidence：
+如果你要再证明本地 task/doc 写入链路也可用，可以补：
 
 ```bash
 python3 skills/pm/scripts/pm.py create --summary "Install smoke task"
@@ -388,88 +325,87 @@ python3 skills/pm/scripts/pm.py get --task-id T1 --include-completed
 
 预期：
 
-- `.pm/local-tasks.json` 出现对应任务
-- `attachments` 字段非空
+- `.pm/local-tasks.json` 出现任务
+- `attachments` 非空
 - `comments` 中出现完成说明
 
-## Step 2: 把仓库内容接入 OpenClaw 实例
+## 4. Step 2：接入 OpenClaw
 
-如果本地无鉴权验证已经通过，再开始接入真实 OpenClaw 实例。
+本地无鉴权验证通过以后，再做这一步。
 
-目录映射如下：
+### 4.1 复制仓库资产
+
+这一段要分清楚两侧：
 
 ```text
-本仓库                                    目标 OpenClaw 实例
-skills/pm                             ->  skills/pm
-skills/coder                          ->  skills/coder
-skills/openclaw-lark-bridge          ->  skills/openclaw-lark-bridge
-plugins/acp-progress-bridge           ->  plugins/acp-progress-bridge
-examples/pm.json.example              ->  仅作参考，不直接覆盖真实配置
-examples/openclaw.json5.snippets.md   ->  仅作参考，不直接覆盖真实配置
+Codex / CODEX_HOME
+skills/pm                    -> ~/.codex/skills/pm
+skills/coder                 -> ~/.codex/skills/coder
+skills/openclaw-lark-bridge  -> ~/.codex/skills/openclaw-lark-bridge
+
+OpenClaw workspace
+plugins/acp-progress-bridge  -> $OPENCLAW_WORKSPACE/plugins/acp-progress-bridge
 ```
 
-最小接入步骤：
+默认推荐：
 
-1. 把 `skills/pm` 拷贝到目标实例的 `skills/pm`
-2. 把 `skills/coder` 拷贝到目标实例的 `skills/coder`
-3. 如果要接 Feishu task/doc，把 `skills/openclaw-lark-bridge` 拷贝到目标实例的 `skills/openclaw-lark-bridge`
-4. 如果要自动进度回推，再把 `plugins/acp-progress-bridge` 拷贝到目标实例的 `plugins/acp-progress-bridge`
-5. 在目标实例的 `openclaw.json` 启用 `acp`
-6. 在 `agents.list[]` 给目标 agent 挂上 `skills: ["pm", "coder"]`
-7. 把 `workspace` 改成当前机器上的绝对路径
-8. 保存后重启或 reload OpenClaw
+- `pm`、`coder`、`openclaw-lark-bridge` 先放到 Codex skills 目录
+- `acp-progress-bridge` 只放到 OpenClaw plugins 目录
+- `skills/openclaw-lark-bridge` 不作为默认 OpenClaw workspace 资产
 
-推荐复制命令示例：
+推荐复制命令：
+
+```bash
+mkdir -p ~/.codex/skills "$OPENCLAW_WORKSPACE/plugins"
+cp -R skills/pm ~/.codex/skills/pm
+cp -R skills/coder ~/.codex/skills/coder
+cp -R skills/openclaw-lark-bridge ~/.codex/skills/openclaw-lark-bridge
+cp -R plugins/acp-progress-bridge "$OPENCLAW_WORKSPACE/plugins/acp-progress-bridge"
+```
+
+复制后立刻检查：
+
+- `~/.codex/skills/pm/SKILL.md` 是否存在
+- `~/.codex/skills/coder/SKILL.md` 是否存在
+- `~/.codex/skills/openclaw-lark-bridge/SKILL.md` 是否存在
+- `plugins/acp-progress-bridge` 主文件是否存在
+
+如果你的 OpenClaw front agent 也需要直接加载 repo 内的 `pm` / `coder`，再额外复制到：
 
 ```bash
 mkdir -p "$OPENCLAW_WORKSPACE/skills"
 cp -R skills/pm "$OPENCLAW_WORKSPACE/skills/pm"
 cp -R skills/coder "$OPENCLAW_WORKSPACE/skills/coder"
-cp -R skills/openclaw-lark-bridge "$OPENCLAW_WORKSPACE/skills/openclaw-lark-bridge"
-cp -R plugins/acp-progress-bridge "$OPENCLAW_WORKSPACE/plugins/acp-progress-bridge"
 ```
 
-AI 执行复制后应立即检查：
-
-- 目标目录是否存在
-- `SKILL.md` 是否在目标 skill 目录中
-- `index.ts` / `core.mjs` 是否在 plugin 目录中
-
-如果你希望这些 skills 在 Codex 里也能全局可见，再额外复制到：
+这里仍然不建议默认复制：
 
 ```text
-~/.codex/skills/pm
-~/.codex/skills/coder
-~/.codex/skills/openclaw-lark-bridge
+skills/openclaw-lark-bridge -> $OPENCLAW_WORKSPACE/skills/openclaw-lark-bridge
 ```
 
-这不是最小前置，但对于“直接在 Codex 里也能调 PM / coder / lark-bridge”很有用。
+### 4.2 最小 OpenClaw 配置
 
-### 2.1 OpenClaw 需要配置哪些项
+最低要求：
 
-OpenClaw 至少要配清下面几类内容：
+1. 有真实可见的 front agent
+2. `acp` 已启用
+3. 如果该 front agent 直接依赖 repo skills，再给它挂 `pm` 和 `coder`
 
-1. `agents.list[]`
-2. `acp`
-3. 如需 Feishu：`channels.feishu`
-4. 如需 Feishu 群会话：`bindings`
-5. 如需自动汇报：`plugins.entries.acp-progress-bridge`
-
-最低要求的 agent 形状：
+最小形状：
 
 ```json
 {
-  "id": "your-agent-id",
-  "name": "your-agent-id",
-  "workspace": "REPLACE_WITH_ABSOLUTE_WORKSPACE_PATH",
-  "skills": ["pm", "coder"]
-}
-```
-
-最低要求的 ACP 形状：
-
-```json
-{
+  "agents": {
+    "list": [
+      {
+        "id": "your-agent-id",
+        "name": "your-agent-id",
+        "workspace": "REPLACE_WITH_ABSOLUTE_WORKSPACE_PATH",
+        "skills": ["pm", "coder"]
+      }
+    ]
+  },
   "acp": {
     "enabled": true,
     "backend": "acpx",
@@ -478,38 +414,24 @@ OpenClaw 至少要配清下面几类内容：
 }
 ```
 
-如果要接 Feishu，再至少补：
+注意：
 
-```json
-{
-  "channels": {
-    "feishu": {
-      "appId": "REPLACE_ME",
-      "appSecret": "REPLACE_ME",
-      "domain": "feishu"
-    }
-  }
-}
-```
+- `front agent` 配的是你要直接对话的 agent
+- ACP worker 由 `acp.defaultAgent` 或运行时派发逻辑决定
+- 两者可以相同，也可以不同
+- `openclaw-lark-bridge` 默认是 Codex 侧 skill，不是 OpenClaw agent 必挂 skill
 
-如果要接群，还要补 `bindings` 和 `channels.feishu.groups`。现成片段见 [examples/openclaw.json5.snippets.md](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/examples/openclaw.json5.snippets.md)。
-
-AI 修改 `openclaw.json` 后，至少要重新检查：
+验证：
 
 ```bash
+acpx --help
 openclaw agents list --bindings
 openclaw plugins list
 ```
 
-预期：
+### 4.3 最小 PM 配置
 
-- 目标 agent 出现在 `agents list --bindings`
-- 如启用 `acp-progress-bridge`，插件列表里能看到它
-- 如安装 `openclaw-lark`，插件列表里能看到 `openclaw-lark`
-
-### 2.2 PM 需要配置哪些项
-
-PM 配置在 `pm.json`。至少要明确：
+`pm.json` 至少要明确：
 
 1. `repo_root`
 2. `project.name`
@@ -519,7 +441,7 @@ PM 配置在 `pm.json`。至少要明确：
 6. `coder.backend`
 7. `coder.agent_id`
 
-如果你只想先本地跑通，保持：
+本地优先最小配置：
 
 ```json
 {
@@ -528,179 +450,140 @@ PM 配置在 `pm.json`。至少要明确：
 }
 ```
 
-如果要接 Feishu，至少再补：
+如果要接 Feishu，再补：
 
 - `task.tasklist_guid` 或可解析的 `tasklist_name`
 - `doc.folder_token`
-- `project.group_id`（如果要飞书群 bootstrap / bindings）
+- `project.group_id`
 
-AI 修改 `pm.json` 后，应该至少验证：
+修改后验证：
 
 ```bash
 python3 skills/pm/scripts/pm.py context --refresh
 python3 skills/pm/scripts/pm.py next --refresh
 ```
 
-预期：
+不要直接把旧机器上的 `pm.json` 原样复制到新机器继续跑。至少要重写：
 
-- `context --refresh` 不报配置解析错误
-- `current-context.json` 里的 backend 字段与配置一致
+- `repo_root`
+- backend 类型
+- 旧 `group_id`
+- 旧 token / 文档地址
 
-这里再强调一次：
+## 5. Step 3：可选接 Feishu / OAuth / Bridge
 
-- front agent 配的是你要直接对话的 agent
-- ACP worker 由 `acp.defaultAgent` 或运行时派发逻辑决定
-- 两者可以相同，也可以不同
+如果当前目标只是本地或 OpenClaw 接入验证，可以跳过本节。
 
-如果 front agent 没有叫 `codex`，但 ACP worker 仍然是 `codex`，这是合法配置。
+### 5.1 Feishu 接入最小要求
 
-最小配置片段见：
+先完成飞书应用准备，再回头写 repo 配置。
 
-- [examples/openclaw.json5.snippets.md](./examples/openclaw.json5.snippets.md)
-- [examples/pm.json.example](./examples/pm.json.example)
+最少需要：
 
-## Step 3: Feishu / bridge / OAuth
+1. 飞书应用和 Bot
+2. `appId` / `appSecret`
+3. 事件订阅
+4. task / doc / attachment 所需权限
+5. 目标群
 
-这一步只在“本地 smoke + OpenClaw 接入”都通过后再做。
+建议优先参考：
 
-如果用户暂时不接 Feishu，可以直接跳到后面的验收章节，只验证本地 `local/repo` backend。
+- OpenClaw Feishu 文档
+- `larksuite/openclaw-lark` README
 
-### 3.1 先让用户创建群，并决定是否需要 `--group-id`
+安装后先做诊断，不要手抄一大段权限清单。
 
-只有当你希望同时预演或执行 workspace bootstrap / Feishu 绑定时，才需要加 `--group-id`。
+### 5.2 OpenClaw Feishu 配置
 
-例如：
+最小形状：
+
+```json5
+{
+  channels: {
+    feishu: {
+      enabled: true,
+      domain: "feishu",
+      accounts: {
+        main: {
+          appId: "cli_xxx",
+          appSecret: "xxx",
+          name: "My AI assistant"
+        }
+      }
+    }
+  }
+}
+```
+
+如果是国际版 Lark，把 `domain` 改成 `"lark"`。
+
+如果目标是群会话，还要补：
+
+- `bindings`
+- `channels.feishu.groups`
+- 必要时 `groupAllowFrom`
+
+这里有一个高频坑：
+
+- `allowFrom` 通常是用户
+- `groupAllowFrom` 通常是群 id，例如 `oc_xxx`
+
+如果 `groupPolicy = "allowlist"`，但 `groupAllowFrom` 里写成用户 open_id，机器人会收到群消息但不回复。
+
+### 5.3 统一授权入口
+
+现在 `pm init` 默认会附带 `auth_bundle`。
+
+如果你想单独重新生成整套授权引导，直接运行：
 
 ```bash
-python3 skills/pm/scripts/pm.py init --project-name demo --group-id oc_demo --dry-run
+python3 skills/pm/scripts/pm.py auth
 ```
 
-这时 dry-run 会出现 `workspace_bootstrap`，并额外暴露：
+默认会一次性输出：
 
-- `workspace_root`
-- `template_root`
-- `template_root_exists`
+- tenant 应用权限 bundle
+- 群里不用 `@` 也回复所需的敏感权限
+- 附件上传所需的 user OAuth 链接
+- 机器人侧建议执行的 `/auth` / `/feishu auth`
+- 当前仍需人工确认的步骤
 
-如果 `template_root_exists` 是 `false`，说明当前仓库外部模板资产不存在。此时要么：
+输出里可以直接优先看这几个顶层字段：
 
-- 设置 `PM_WORKSPACE_TEMPLATE_ROOT`
-- 要么补齐模板来源
+- `permission_url`
+- `app_scope_auth_url`
+- `user_oauth_verification_url`
+- `manual_steps`
 
-不要把这类失败误判成“最小安装步骤写错了”。
-
-### 3.2 安装 OpenClaw Feishu 插件
-
-当前本机实际使用的是官方 `openclaw-lark` 插件，包名是：
-
-```text
-@larksuite/openclaw-lark
-```
-
-安装命令：
+如果你只想做最小初始化、不想默认生成这组引导，可以显式关闭：
 
 ```bash
-openclaw plugins install @larksuite/openclaw-lark
+python3 skills/pm/scripts/pm.py init --project-name demo --no-auth-bundle --dry-run
 ```
 
-如果希望安装记录固定到具体版本，可以再加：
+### 5.4 `/auth` 与附件 OAuth
 
-```bash
-openclaw plugins install --pin @larksuite/openclaw-lark
-```
+Bot 能收消息后，要明确引导用户主动触发授权：
 
-安装后验证：
+- 优先尝试 `/auth`
+- 如果机器人帮助文案显示 `/feishu auth`，以机器人提示为准
 
-```bash
-openclaw plugins info openclaw-lark
-openclaw plugins list
-```
+附件上传不是 bridge 行为，而是 PM 直接调用 Feishu attachment API。
 
-你应该看到至少这些事实：
-
-- `id: openclaw-lark`
-- `Status: loaded`
-- `Install: npm`
-- `Spec: @larksuite/openclaw-lark`
-- 存在 `feishu_task_task`、`feishu_task_tasklist`、`feishu_update_doc` 等工具
-
-如果插件加载失败，先跑：
-
-```bash
-openclaw plugins doctor
-feishu-diagnose
-```
-
-官方参考：
-
-- package: `@larksuite/openclaw-lark`
-- plugin README: `~/.openclaw/extensions/openclaw-lark/README.md`
-- usage guide: `https://bytedance.larkoffice.com/docx/MFK7dDFLFoVlOGxWCv5cTXKmnMh`
-
-AI 如果要进一步确认工具层可用，应继续检查：
-
-```bash
-python3 skills/openclaw-lark-bridge/scripts/invoke_openclaw_tool.py \
-  --tool feishu_task_tasklist \
-  --action list \
-  --dry-run
-```
-
-预期：
-
-- 能解析出 gateway URL
-- 能构造出 `/tools/invoke` 请求
-- body 里包含 `tool`、`action`、`args.action`
-
-### 3.3 可选启用 progress bridge
-
-如果你只想先完成本地 PM/GSD/Coder 协作，可以跳过 `acp-progress-bridge`。
-
-只有在你需要：
-
-- 子会话进度自动回推
-- 子会话完成结果自动回推
-- Feishu 群内持续看到执行状态
-
-时，再去启用对应插件和 Feishu 绑定。
-
-当前 bridge 的默认契约要这样理解：
-
-- 默认子会话：`agent:codex:acp:`
-- 默认父会话：`agent:*:feishu:group:` 和 `agent:*:main`
-- 默认流程：plugin 定时轮询发现子会话 -> 读取 stream / transcript -> 组装内部 `[[acp_bridge_update]]` -> 回推父会话 -> 由父会话生成用户可见自然语言
-
-也就是说，bridge 发现“Codex 跑完了”不是靠 webhook，而是靠轮询 session store、stream 和 transcript：
-
-- 周期性扫描符合前缀的 child sessions
-- 通过 `spawnedBy` 找到对应 parent session
-- 看到 progress/done 事件后做节流和 settle
-- 再把 update 投递回 parent session
-
-这意味着：
-
-- bridge 本身不是最小安装前置
-- 它不是直接“替 PM 报进度”
-- 它也不是“所有 provider 默认开箱即用”
-- 它当前是 Codex-first，再通过前缀做后续扩展
-
-### 3.4 Feishu 附件授权怎么做
-
-任务附件不是走 `openclaw-lark-bridge`，而是 PM 直接走 Feishu Task Attachment API。
-
-第一次用下面这些命令时：
+第一次执行下面命令时，如果还没有有效 OAuth：
 
 ```bash
 python3 skills/pm/scripts/pm.py attachments --task-id T1
 python3 skills/pm/scripts/pm.py upload-attachments --task-id T1 --file ./evidence.txt
 ```
 
-如果还没有有效 OAuth，返回结果里会出现：
+预期会返回：
 
 - `status = "authorization_required"`
 - `verification_uri_complete`
 - `user_code`
 
-你也可以手动先拿授权链接：
+也可以主动取授权链接：
 
 ```bash
 python3 skills/pm/scripts/pm.py auth-link \
@@ -708,228 +591,148 @@ python3 skills/pm/scripts/pm.py auth-link \
   --scopes task:task:read task:attachment:read task:attachment:write offline_access
 ```
 
-完成授权后，PM 会把 token 缓存在 state 目录下：
-
-- Linux/macOS: `~/.local/state/openclaw-pm-coder-kit/pm/attachment-oauth-token.json`
-- Windows: `%LOCALAPPDATA%\\OpenClawPMCoder\\state\\attachment-oauth-token.json`
-
-如果附件授权失败，优先按这个顺序排查：
+如果附件授权失败，按这个顺序排查：
 
 1. `openclaw.json` 里是否已有 `channels.feishu.appId` / `appSecret`
-2. app 权限页里是否已经开通 `task:task:read`、`task:attachment:read`、`task:attachment:write`
-3. 返回的 `verification_uri_complete` 是否已由正确账号完成授权
-4. state 目录里是否残留过期的 `attachment-oauth-pending.json`
-5. 重新执行 `upload-attachments` 时是否仍然返回 `authorization_required`
+2. app 权限是否完整
+3. 返回的授权链接是否由正确账号完成
+4. state 目录里是否残留过期 token / pending 文件
 
-常见失败现象与处理：
+补充一个这次远端真实踩到的坑：
 
-- `missing channels.feishu.appId/appSecret in openclaw.json`
-  处理：先补 `channels.feishu` 配置
-- `authorization_required`
-  处理：打开返回的 `verification_uri_complete`，完成 OAuth 后重试
-- `failed to upload task attachments`
-  处理：检查 app 权限、用户身份、文件大小限制、网络与 OpenAPI 返回体
-- `failed to verify Feishu OAuth user identity`
-  处理：优先怀疑授权账号、app 配置或 token 已失效
+- 如果 `appSecret` 不是明文，而是 OpenClaw SecretRef，例如 `{"source":"file","provider":"lark-secrets","id":"/lark/appSecret"}`，旧版 PM 可能会把它当普通字符串直接发给飞书，表现为 `device authorization failed: invalid_client`
+- 现在仓库内 PM 已支持解析常见的 `env` / `file` / `exec` SecretRef；如果你在旧环境里遇到这个报错，先不要急着怀疑飞书凭证本身错了，先检查是不是 SecretRef 没有被正确解引用
 
-AI 不应把附件 OAuth 失败误判为“PM 安装失败”。正确分类是：
+### 5.5 把飞书权限开通抽出来
 
-- PM 安装成功
-- Feishu attachment OAuth 未完成
-- 这是外部授权问题，不是 repo 代码问题
+不要把“权限开通”混在长链路安装末尾再做。
 
-## 配置片段说明
+尤其下面这类能力，应该单独准备并尽早验：
 
-### `examples/pm.json.example`
+- 群里不用 `@` 也回复
+- PM 附件上传
+- Feishu task / doc 真同步
 
-这个文件现在是本地优先的最小示例，只保留 repo 和 coder 的核心字段。
-
-如果后续要接真实 Feishu，再按实际环境补：
-
-- `project.group_id`
-- `task.tasklist_guid`
-- `doc.folder_token`
-- 各类文档 token
-
-### `examples/openclaw.json5.snippets.md`
-
-这个文件已经拆成三类片段：
-
-- 最小 OpenClaw 接入片段
-- 可选的 `acp-progress-bridge` 片段
-- 可选的 Feishu `bindings/channels` 片段
-
-不要把增强片段整体照抄成“最小配置”。
-
-其中 `acp-progress-bridge` 片段建议按三组参数来理解：
-
-- 作用域：`parentSessionPrefixes`、`childSessionPrefixes`
-- 节流：`pollIntervalMs`、`firstProgressDelayMs`、`progressDebounceMs`、`maxProgressUpdatesPerRun`
-- 完成策略：`settleAfterDoneMs`、`replayCompletedWithinMs`、`finalAssistantTailChars`、`deliverProgress`、`deliverCompletion`
-
-## 验证矩阵
-
-| 类型 | 目标 | 命令 / 动作 |
-|-----|------|-------------|
-| 本地无鉴权 smoke | Python 语法 | `python3 -m py_compile skills/pm/scripts/*.py skills/coder/scripts/*.py` |
-| 本地无鉴权 smoke | CLI 可启动 | `python3 skills/pm/scripts/pm.py --help` |
-| 本地无鉴权 smoke | context 子命令存在 | `python3 skills/pm/scripts/pm.py context --help` |
-| 本地无鉴权 smoke | bootstrap dry-run | `python3 skills/pm/scripts/pm.py init --project-name demo --dry-run` |
-| 本地无鉴权 smoke | GSD 路由 | `python3 skills/pm/scripts/pm.py route-gsd --repo-root .` |
-| 本地无鉴权 smoke | repo 内 lark bridge script 可启动 | `python3 skills/openclaw-lark-bridge/scripts/invoke_openclaw_tool.py --help` |
-| 本地无鉴权 smoke | observer 可启动 | `python3 skills/coder/scripts/observe_acp_session.py --help` |
-| 真实集成验证 | OpenClaw Feishu 插件已加载 | `openclaw plugins info openclaw-lark` |
-| 真实集成验证 | OpenClaw 实例正常加载 skills | 启动或 reload OpenClaw，确认 agent 可见 `pm` / `coder` |
-| 真实集成验证 | progress bridge 生效 | 启用插件后观察 ACP 子会话进度回推 |
-| 真实集成验证 | Feishu 绑定生效 | 确认 bindings / channels / group id 配置正确 |
-| 真实集成验证 | 附件 OAuth 生效 | `upload-attachments` 不再返回 `authorization_required` |
-
-建议 AI 安装代理真正交付时，至少覆盖矩阵里的前 8 项；如果用户明确要求 Feishu，再继续做后 4 项。
-
-## 端到端验收示例
-
-如果用户要求“安装完就要证明这套能跑”，推荐直接在一个真实 repo 里按下面顺序做一次验收。
-
-### E2E-1：初始化项目
-
-本地模式：
+先看内置 preset：
 
 ```bash
-python3 skills/pm/scripts/pm.py init \
-  --project-name demo \
-  --task-backend local \
-  --doc-backend repo \
-  --write-config
+python3 skills/pm/scripts/pm.py permission-bundle --list-presets
 ```
 
-Feishu 群模式：
+给 OpenClaw Lark 插件生成 tenant 权限导入 JSON：
 
 ```bash
-python3 skills/pm/scripts/pm.py init \
-  --project-name demo \
-  --group-id oc_xxx \
-  --task-backend feishu \
-  --doc-backend feishu \
-  --write-config
+python3 skills/pm/scripts/pm.py permission-bundle \
+  --preset openclaw-lark-tenant-baseline
 ```
 
-预期：
-
-- `pm.json` 已生成或更新
-- `.pm/current-context.json` 已生成
-- 如果 bootstrap task 被创建，返回里会有 `bootstrap_task`
-
-### E2E-2：创建一个真实任务
+给“群里不 @ 也回复”额外生成敏感权限导入 JSON：
 
 ```bash
-python3 skills/pm/scripts/pm.py create \
-  --summary "Install E2E smoke task" \
-  --request "Verify PM -> coder -> bridge -> completion flow"
+python3 skills/pm/scripts/pm.py permission-bundle \
+  --preset openclaw-lark-tenant-baseline \
+  --preset group-open-reply
 ```
 
-预期：
+输出里重点看：
 
-- 返回 `task_id`
-- `current-context.json` 已刷新
-- 如果是 Feishu backend，任务已写入 Feishu tasklist
+- `permission_url`
+- `auth_url`
+- `import_payload`
+- `notes`
+- `manual_steps`
 
-### E2E-3：派给 Codex
+这一步的定位要说清楚：
+
+- PM 现在能帮你生成权限页链接和批量导入 JSON
+- 但 `im:message.group_msg` 这类敏感权限，仍然要在飞书开放平台确认新增权限并重新发布应用
+- 也就是说，这不是“后台全自动开通”，而是“把要开的权限一次性整理好，减少人工抄写和漏项”
+- 飞书官方插件能自动化的是“扫码建 bot / 写配置 / 生成用户授权入口”，不能替你在开放平台代点“确认新增权限”“创建版本”“确认发布”
+
+如果你已经把 `requireMention=false` 配好了，但群里还是必须 `@` 才回复，优先检查这里，而不是反复重装 OpenClaw。
+
+### 5.6 用户手动步骤要单独看
+
+完整安装里，下面这些动作一定要明确告诉用户是“手动步骤”：
+
+1. 手动运行 `npx -y @larksuite/openclaw-lark install`
+2. 如果安装过程要求扫码或确认 App 信息，用户自己完成
+3. 手动在飞书开放平台导入权限、确认新增权限并发布
+4. 手动在飞书里执行 `/auth` 或 `/feishu auth`
+5. 手动在目标群里发普通消息验证机器人是否已经能免 `@` 回复
+
+不要把这些步骤写成“AI 会自动做好”，否则后面最容易绕晕。
+
+### 5.7 可选启用 progress bridge
+
+只有在你需要下面能力时，才启用 `acp-progress-bridge`：
+
+- 子会话进度自动回推
+- 子会话完成结果自动回推
+- Feishu 群内持续看到执行状态
+
+它不是最小安装前置。
+
+如果 bridge 没有自动汇报，按这个顺序排查：
+
+1. `parentSessionPrefixes` 是否命中父会话
+2. `childSessionPrefixes` 是否命中子会话
+3. OpenClaw session store / transcript / ACP stream 是否存在
+4. `bridge-status` 是否已显示 `progress delivered` 或 `completion delivered`
+
+如果 plugin 内部已经 delivered，但外部仍看不到结果，再去查父会话策略、bindings 或消息投递链路。
+
+## 6. 验收建议
+
+### 6.1 最小可交付
+
+如果只做本地验证，至少交付：
+
+1. `py_compile`
+2. `pm.py --help`
+3. `init --dry-run`
+4. `context --refresh`
+5. `route-gsd --repo-root .`
+
+### 6.2 OpenClaw 接入验收
+
+至少补：
+
+1. `openclaw agents list --bindings`
+2. `openclaw plugins list`
+3. `python3 skills/pm/scripts/pm.py next --refresh`
+
+### 6.3 完整集成验收
+
+如果用户明确要求 Feishu E2E，再继续做。
+
+这里的前置条件必须已经满足：
+
+1. OpenClaw runtime 已可用
+2. `openclaw-lark` 已安装并加载
+3. `channels.feishu` 已配置
+4. 飞书 app / bot / 群 / 权限已准备好
+5. 用户已能通过 `/auth` 或环境里的等价命令完成授权
+
+真正的完整链路才是：
+
+1. 创建真实任务
+2. 派给 Codex
+3. 观察 bridge 回推
+4. 完成任务
+5. 读取最终状态
+
+可直接按下面顺序执行：
 
 ```bash
-python3 skills/pm/scripts/pm.py run \
-  --task-id T1
-```
-
-预期：
-
-- 返回 `backend`
-- 返回 `agent_id`
-- 返回 `result`
-- `.pm/last-run.json` 已生成
-
-如果 `backend = "acp"`，说明它会走 ACP / acpx 子会话；如果 bridge 已启用，就应该继续观察父会话进度。
-
-### E2E-4：观察 bridge
-
-如果启用了 `acp-progress-bridge`，继续检查：
-
-```bash
-openclaw agents list --bindings
-openclaw plugins info acp-progress-bridge
-```
-
-并在父会话里确认：
-
-- 是否出现 progress 更新
-- Codex 完成后是否出现 completion 汇报
-
-如果没有自动汇报，再回到文档下方的“Bridge 调试路径”排查。
-
-### E2E-5：完成任务
-
-本地模式可以直接手动完成一次：
-
-```bash
-python3 skills/pm/scripts/pm.py complete \
-  --task-id T1 \
-  --content "E2E smoke done"
-```
-
-如果要带附件：
-
-```bash
-python3 skills/pm/scripts/pm.py complete \
-  --task-id T1 \
-  --content "E2E smoke done" \
-  --file ./README.md
-```
-
-预期：
-
-- 任务状态变成 completed
-- 评论里出现 completion 内容
-- 如果有附件，上传结果写进返回体
-
-### E2E-6：最终读取结果
-
-```bash
+python3 skills/pm/scripts/pm.py init --project-name demo --group-id oc_xxx --task-backend feishu --doc-backend feishu --write-config
+python3 skills/pm/scripts/pm.py create --summary "Install E2E smoke task" --request "Verify PM -> coder -> bridge -> completion flow"
+python3 skills/pm/scripts/pm.py run --task-id T1
+python3 skills/pm/scripts/pm.py complete --task-id T1 --content "E2E smoke done"
 python3 skills/pm/scripts/pm.py get --task-id T1 --include-completed
 ```
 
-预期：
-
-- `completed_at` 非空
-- `comments` 非空
-- 如果走本地 backend，`.pm/local-tasks.json` 中也能看到最终状态
-- 如果走 Feishu backend，Feishu task 中也能看到最终状态
-
-## AI 安装验收清单
-
-如果安装工作是由 Codex、Claude Code 或其他 AI 代理执行，建议把下面这些结果作为最小交付物：
-
-1. 一组本地无鉴权 smoke 命令的实际执行结果。
-2. 当前机器上的 `openclaw`、`codex`、`node` 发现结果。
-3. 最终使用的 `workspace` 绝对路径。
-4. 目标 OpenClaw 实例里是否已经复制：
-   - `skills/pm`
-   - `skills/coder`
-   - `skills/openclaw-lark-bridge`
-   - `plugins/acp-progress-bridge`
-5. 如果启用 Feishu：
-   - `openclaw-lark` 是否已加载
-   - `skills/openclaw-lark-bridge/scripts/invoke_openclaw_tool.py` 是否存在
-   - `bindings/channels` 是否已配置
-6. 如果启用附件上传：
-   - 是否已经拿到 user OAuth
-   - `attachment-oauth-token.json` 是否已生成
-
-AI 代理最终输出里，至少应该明确给出：
-
-- 哪一步已经通过
-- 哪一步未通过
-- 未通过属于 repo、本机运行时、还是 Feishu 外部依赖
-
-建议 AI 最终交付直接包含下面这类摘要：
+建议最终交付统一按这几个状态汇报：
 
 ```text
 Installation Summary
@@ -937,104 +740,26 @@ Installation Summary
 - gsd_runtime: pass/fail
 - openclaw_runtime: pass/fail
 - openclaw_lark: pass/fail
-- progress_bridge: pass/fail
+- progress_bridge: not_run/pass/fail
 - feishu_binding: not_run/pass/fail
 - attachment_oauth: not_run/pass/fail
-
-Artifacts
-- repo_root:
-- openclaw_workspace:
-- pm_config:
-- openclaw_config:
-- state_dir:
-
-Blockers
-- ...
 ```
 
-## 常见问题
+## 7. 常见问题
 
-- `workspace` 不是绝对路径
-- Windows 下 JSON 路径写成了未转义的 `C:\path\to\workspace`
-- `skills` 已拷贝，但 agent 没挂 `pm`、`coder`
-- 装了插件，但没在 `plugins.entries` 里启用
-- `skills/openclaw-lark-bridge` 没复制到 OpenClaw workspace，导致 PM 找不到 repo 内 bridge script
-- GSD 没装到 Codex 目录，或 `GSD_TOOLS_PATH` 没配对
-- 实际使用的 ACP agent 前缀和 `childSessionPrefixes` 不匹配
-- 父会话 key 不匹配 `parentSessionPrefixes`，导致子 run 虽存在但不会被 bridge 接管
-- 父会话能看到子 run，但找不到对应 `sessionId`
-- progress 其实已抓到，但还在 `firstProgressDelayMs` / `progressDebounceMs` 节流窗口里
-- completion 已抓到，但还在 `settleAfterDoneMs` 等待窗口里
-- run 太旧才被发现，超过 `replayCompletedWithinMs`，所以 completion 不会补发
-- 插件宿主不是标准 OpenClaw CLI 入口，导致回推时找不到 CLI entrypoint
-- 中文项目名没传 `--english-name`
-- `workspace_bootstrap` 预期出现却是 `null`
-原因：你没有传 `--group-id`
-- `template_root_exists` 为 `false`
-原因：workspace 模板资产不在当前默认路径，需要设置 `PM_WORKSPACE_TEMPLATE_ROOT`
-- `route-gsd` 里 `runtime.ready` 是 `false`
-原因：本地缺少 `gsd-tools`、`node`，或 `GSD_TOOLS_PATH` 指向错误；先安装 `get-shit-done`
-- `plan-phase` 报 `Unknown agent id`
-原因：front agent 不存在；请先运行 `openclaw agents list --bindings`，不要把 `codex` 这个 ACP worker 名字直接当成 front agent
-- `materialize-gsd-tasks` 没有按预期工作
-原因：这一步需要真实 task backend，不属于本地无鉴权 smoke
-- `upload-attachments` 一直返回 `authorization_required`
-原因：附件 OAuth 还没完成，或者 token 已过期/权限不全
-- `auth-link` 报 `missing channels.feishu.appId/appSecret in openclaw.json`
-原因：Feishu app 配置没写进 `openclaw.json`
-- `invoke_openclaw_tool.py --dry-run` 就失败
-原因：通常是 `openclaw.json` 找不到、gateway token 不存在、或 gateway URL 无法解析
-- `openclaw plugins info openclaw-lark` 没有 `Status: loaded`
-原因：插件未安装、未启用、安装记录损坏，或 OpenClaw 版本过低
+- `workspace` 不是绝对路径：改成目标机器真实绝对路径
+- Windows JSON 路径未转义：优先写 `C:/...`
+- 中文项目名没传 `--english-name`：补参数
+- `route-gsd` 的 `runtime.ready = false`：先检查 `node` 和 `gsd-tools`
+- `plan-phase` 报 `Unknown agent id`：说明 front agent 不存在，不要把 ACP worker 当成 front agent
+- `upload-attachments` 一直返回 `authorization_required`：附件 OAuth 还没完成，不等于 PM 安装失败
+- `openclaw plugins info openclaw-lark` 不是 `Status: loaded`：插件未安装、未启用或版本不兼容
+- 群消息到了但机器人不回：优先检查 `groupAllowFrom` 是否写成了错误的用户 id
+- `invoke_openclaw_tool.py --dry-run` 失败：通常是 `openclaw.json`、gateway token 或 gateway URL 解析有问题
 
-## Bridge 调试路径
-
-如果你发现“Codex 跑完了，但父会话没自动汇报”，建议按这个顺序排查：
-
-1. 先确认这是不是 bridge 范围内的问题
-
-- 如果只是本地 smoke，还没启用插件，这不算 bridge 故障
-- 如果插件启用了，但父会话完全没看到任何 progress / completion，再进入下面几步
-
-2. 看配置作用域是否命中
-
-- 检查 `plugins.entries.acp-progress-bridge.config.parentSessionPrefixes`
-- 检查 `plugins.entries.acp-progress-bridge.config.childSessionPrefixes`
-- 如果你的父会话是本地 main session，却没包含 `agent:*:main`，就不会回推
-- 如果你的子会话不是 `agent:codex:acp:`，也不会被默认观察
-
-3. 看 OpenClaw 运行态文件是否真的存在
-
-- session store：`$OPENCLAW_HOME/agents/<agent>/sessions/sessions.json`
-- transcript：`<session>.jsonl`
-- ACP stream：`<session>.acp-stream.jsonl`
-
-4. 看 plugin 自己的状态摘要
-
-- 执行 `bridge-status`
-- 重点关注：
-  - `scope`
-  - `discovery`
-  - 每个 run 的 `hint`
-
-如果这里已经显示：
-
-- `missing parent sessionId`
-- `waiting firstProgressDelayMs`
-- `waiting progressDebounceMs`
-- `waiting settleAfterDoneMs`
-- `completion skipped replay`
-
-那问题已经在 plugin 内部可定位，不要再先怀疑 Feishu。
-
-5. 最后再区分“plugin 内部已成功”还是“外部可见结果缺失”
-
-- 如果日志里已有 `progress delivered` / `completion delivered`，说明 bridge 已把内部消息送回父会话
-- 这之后如果 Feishu 群里仍没看到自然语言结果，就要去查父会话策略、bindings/channels 或外部投递链路
-
-## 运行态目录说明
+## 8. 运行态目录
 
 | 类别 | 典型位置 | 说明 |
-|-----|------|------|
-| repo-local | `.planning/`, `.pm/`, `./openclaw.json`, `./.openclaw/openclaw.json` | 跟当前仓库强相关，便于版本化和协作 |
+|------|----------|------|
+| repo-local | `.planning/`, `.pm/`, `./openclaw.json`, `./.openclaw/openclaw.json` | 跟当前仓库强相关，适合版本化 |
 | user-global | `~/.openclaw/`, `~/.config/openclaw/`, `%APPDATA%\\OpenClaw\\`, `%LOCALAPPDATA%\\OpenClawPMCoder\\` | 跟当前用户环境强相关，不应直接提交 |
