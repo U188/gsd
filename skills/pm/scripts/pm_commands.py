@@ -39,6 +39,11 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             reasons.append("任务超时预算较长")
         return (len(reasons) > 0), reasons
 
+    def build_runtime_banner(*, backend: str, agent_id: str, task_id: str, auto_switched: bool) -> str:
+        task_suffix = f" · 任务 {task_id}" if task_id else ""
+        switch_suffix = " · 本次为自动路由" if auto_switched else ""
+        return f"🔔 当前任务已进入 OpenClaw Coding Kit（PM）执行链路 · backend={backend} · agent={agent_id}{task_suffix}{switch_suffix}"
+
     def run_coder_backend(
         *,
         backend: str,
@@ -600,10 +605,12 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         label = api.build_run_label(api.project_root_path(), agent_id, task_id)
         backend_warnings: list[str] = []
         explicit_backend = bool(str(args.backend or "").strip())
+        auto_switched = False
         if not explicit_backend and backend == "codex-cli":
             prefer_acp, prefer_reasons = should_prefer_acp_for_bundle(bundle, message, timeout_seconds)
             if prefer_acp:
                 backend = "acp"
+                auto_switched = True
                 backend_warnings.append(
                     "Auto-switched backend from codex-cli to acp for this run: " + "；".join(prefer_reasons)
                 )
@@ -635,6 +642,12 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             "side_effects": side_effects,
             "run_id": run_id,
             "warnings": backend_warnings,
+            "runtime_banner": build_runtime_banner(
+                backend=backend,
+                agent_id=agent_id,
+                task_id=task_id,
+                auto_switched=auto_switched,
+            ),
         }
         api.write_pm_run_record(payload, run_id=run_id)
         return emit(payload)

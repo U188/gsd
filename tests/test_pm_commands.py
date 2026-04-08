@@ -117,6 +117,9 @@ class PmCommandsFallbackTest(unittest.TestCase):
         self.assertEqual(api.persist_dispatch_calls, 0)
         self.assertEqual(api.persist_run_calls, 1)
         self.assertIn("fell back to backend=codex-cli", payload["warnings"][0])
+        self.assertIn("OpenClaw Coding Kit（PM）执行链路", payload["runtime_banner"])
+        self.assertIn("backend=codex-cli", payload["runtime_banner"])
+        self.assertIn("任务 T1", payload["runtime_banner"])
         self.assertEqual(api.last_locked_task_id, "T1")
         self.assertEqual(api.last_written_name, "last-run.json")
         self.assertEqual(api.last_written_payload["backend"], "codex-cli")
@@ -162,6 +165,9 @@ class PmCommandsFallbackTest(unittest.TestCase):
         self.assertEqual(api.codex_calls, 0)
         self.assertEqual(api.last_locked_task_id, "T2")
         self.assertIn("Auto-switched backend from codex-cli to acp", payload["warnings"][0])
+        self.assertIn("OpenClaw Coding Kit（PM）执行链路", payload["runtime_banner"])
+        self.assertIn("backend=acp", payload["runtime_banner"])
+        self.assertIn("本次为自动路由", payload["runtime_banner"])
 
     def test_cmd_run_writes_run_id_from_dispatch_side_effects(self) -> None:
         api = _FakeApi()
