@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 from typing import Any, Callable
 
@@ -10,7 +11,8 @@ BridgeFn = Callable[..., dict[str, Any]]
 def build_run_label(root: Path, agent_id: str, task_id: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", root.name.lower()).strip("-") or "repo"
     task_slug = re.sub(r"[^a-z0-9]+", "-", task_id.lower()).strip("-") or "bootstrap"
-    return f"pm-{slug}-{agent_id}-{task_slug}"
+    suffix = uuid.uuid4().hex[:8]
+    return f"pm-{slug}-{agent_id}-{task_slug}-{suffix}"
 
 
 def spawn_acp_session(

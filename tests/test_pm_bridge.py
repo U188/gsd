@@ -11,6 +11,7 @@ if str(PM_SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(PM_SCRIPT_DIR))
 
 from pm_bridge import bridge_script_path
+from pm_dispatch import build_run_label
 
 
 class PmBridgeTest(unittest.TestCase):
@@ -21,6 +22,14 @@ class PmBridgeTest(unittest.TestCase):
         self.assertTrue(repo_script.exists())
         resolved = bridge_script_path((repo_script, fallback_script))
         self.assertEqual(resolved, repo_script)
+
+    def test_build_run_label_is_unique_per_call(self) -> None:
+        root = Path("/tmp/openclaw-coding-kit")
+        label_a = build_run_label(root, "codex", "T2")
+        label_b = build_run_label(root, "codex", "T2")
+        self.assertNotEqual(label_a, label_b)
+        self.assertTrue(label_a.startswith("pm-openclaw-coding-kit-codex-t2-"))
+        self.assertTrue(label_b.startswith("pm-openclaw-coding-kit-codex-t2-"))
 
 
 if __name__ == "__main__":
