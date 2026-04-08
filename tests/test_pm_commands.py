@@ -34,7 +34,10 @@ class _FakeApi:
             "thinking": "high",
             "session_key": "main",
             "auto_switch_to_acp": False,
+            "acp_cleanup": "delete",
         }
+        self.last_run_record = None
+        self._now_counter = 0
 
     def build_coder_context(self, task_id: str = "", task_guid: str = ""):
         return self.last_bundle, Path("/tmp/coder-context.json")
@@ -82,6 +85,35 @@ class _FakeApi:
         self.last_locked_task_id = task_id
         yield Path(f"/tmp/{task_id}.lock")
 
+    def acp_cleanup_mode_from_coder(self, coder: dict) -> str:
+        return str((coder or {}).get("acp_cleanup") or "delete")
+
+    def build_run_cleanup_plan(self, *, backend: str, session_key: str = "", acp_cleanup: str = "") -> dict:
+        return {
+            "status": "planned" if backend == "acp" else "not-applicable",
+            "backend": backend,
+            "session_key": session_key,
+            "acp_cleanup": acp_cleanup if backend == "acp" else "",
+        }
+
+    def now_iso(self) -> str:
+        self._now_counter += 1
+        return f"2026-04-09T07:00:0{self._now_counter}+08:00"
+
+    def load_json_file(self, path: Path):
+        return self.last_run_record
+
+    def finalize_last_run_for_completion(self, last_run: dict | None, *, task_id: str = "", task_guid: str = "", completed_at: str, finalized_at: str):
+        if not isinstance(last_run, dict):
+            return None, {"status": "no-last-run-record"}
+        updated = dict(last_run)
+        updated["task_id"] = task_id or updated.get("task_id") or ""
+        updated["task_guid"] = task_guid or updated.get("task_guid") or ""
+        updated["completed_at"] = completed_at
+        updated["finalized_at"] = finalized_at
+        updated["cleanup_result"] = {"status": "finalized", "completed_at": completed_at, "finalized_at": finalized_at}
+        return updated, updated["cleanup_result"]
+
     def write_pm_bundle(self, name: str, payload: dict) -> None:
         self.last_written_name = name
         self.last_written_payload = payload
@@ -90,6 +122,7 @@ class _FakeApi:
         self.last_written_name = "last-run.json"
         self.last_written_payload = payload
         self.last_written_run_id = run_id
+        self.last_run_record = dict(payload)
 
 
 class PmCommandsFallbackTest(unittest.TestCase):

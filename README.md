@@ -114,6 +114,8 @@ Current operator recommendation on OpenClaw `2026.3.24`:
 - keep `coder.backend = "codex-cli"` as the default config for local-first operation
 - keep `backend=acp` available as an explicit path when you want native ACP child sessions
 - only enable automatic ACP routing when you explicitly set `coder.auto_switch_to_acp = true`
+- when `backend=acp`, default `coder.acp_cleanup = "delete"` so run-mode child sessions are auto-reclaimed after completion; set it to `"keep"` only when you deliberately want to preserve the child session for debugging
+- task completion is finalized by `pm complete`; it now writes machine-readable cleanup metadata back into `.pm/last-run.json` instead of relying on operator memory
 - if `sessions_spawn` is used through Gateway HTTP, expose it with `gateway.tools.allow = ["sessions_spawn", "sessions_send"]`
 
 ## Quick Start

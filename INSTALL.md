@@ -195,6 +195,8 @@ python3 skills/pm/scripts/pm.py run --backend acp --agent codex --timeout 120
 - `acpx` CLI 装好了，不代表旧的 `openclaw.json` 插件配置一定合法
 - 如果 `openclaw config validate` 仍报 `plugin not found`，优先修配置，而不是重复安装 CLI
 - 在 OpenClaw `2026.3.24` 上，推荐保留 `coder.backend = "codex-cli"` 作为默认配置；如需自动把 brownfield、required reads 多、task/doc 协作重的执行切到 `acp`，请显式设置 `coder.auto_switch_to_acp = true`
+- 如果显式使用 `backend=acp`，默认 `coder.acp_cleanup = "delete"`，run-mode 子会话在任务完成后按机制自动回收；只有需要保留现场排障时才改成 `"keep"`
+- 任务结束以后，以 `pm complete` 作为正式收口动作；该命令会把 cleanup 结果写回 `.pm/last-run.json`
 
 #### Feishu 插件
 

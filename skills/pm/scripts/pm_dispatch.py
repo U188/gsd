@@ -25,6 +25,7 @@ def spawn_acp_session(
     thinking: str = "high",
     label: str = "",
     session_key: str = "main",
+    cleanup: str = "delete",
 ) -> dict[str, Any]:
     args: dict[str, Any] = {
         "task": message,
@@ -34,7 +35,7 @@ def spawn_acp_session(
         "runTimeoutSeconds": timeout_seconds,
         "thinking": thinking,
         "mode": "run",
-        "cleanup": "keep",
+        "cleanup": cleanup,
         "sandbox": "inherit",
     }
     if label:

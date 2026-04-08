@@ -23,6 +23,8 @@
     "agent_id": "codex",
     "timeout": 900,
     "thinking": "high",
-    "session_key": "main"
+    "session_key": "main",
+    "auto_switch_to_acp": false,
+    "acp_cleanup": "delete"
   }
 }

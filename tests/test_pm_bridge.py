@@ -61,7 +61,7 @@ class PmBridgeTest(unittest.TestCase):
         self.assertEqual(spawn_args["sandbox"], "inherit")
         self.assertEqual(spawn_args["cwd"], "/tmp/project")
         self.assertEqual(spawn_args["mode"], "run")
-        self.assertEqual(spawn_args["cleanup"], "keep")
+        self.assertEqual(spawn_args["cleanup"], "delete")
 
 
 if __name__ == "__main__":

@@ -60,6 +60,9 @@ from pm_context import refresh_context_cache as refresh_pm_context_cache
 from pm_context import task_brief as build_task_brief
 from pm_dispatch import build_run_label as format_run_label
 from pm_dispatch import extract_dispatch_ids, spawn_acp_session as dispatch_acp_session
+from pm_lifecycle import acp_cleanup_mode_from_coder
+from pm_lifecycle import build_run_cleanup_plan
+from pm_lifecycle import finalize_last_run_for_completion
 from pm_docs import create_doc as create_project_doc
 from pm_docs import create_root_folder as create_project_root_folder
 from pm_docs import ensure_project_docs as ensure_pm_docs
@@ -1626,6 +1629,9 @@ def build_cli_api() -> SimpleNamespace:
         sync_gsd_docs=sync_gsd_docs,
         sync_gsd_progress=sync_gsd_progress,
         spawn_acp_session=spawn_acp_session,
+        acp_cleanup_mode_from_coder=acp_cleanup_mode_from_coder,
+        build_run_cleanup_plan=build_run_cleanup_plan,
+        finalize_last_run_for_completion=finalize_last_run_for_completion,
         task_id_for_output=task_id_for_output,
         task_kind=task_kind,
         task_pool=task_pool,

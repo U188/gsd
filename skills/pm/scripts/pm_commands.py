@@ -55,6 +55,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         session_key: str,
         label: str,
         bundle: dict[str, Any],
+        acp_cleanup: str,
     ) -> tuple[str, dict[str, Any], dict[str, Any], list[str]]:
         warnings: list[str] = []
         normalized = str(backend or "acp").strip() or "acp"
@@ -68,6 +69,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                     thinking=thinking,
                     label=label,
                     session_key=session_key,
+                    cleanup=acp_cleanup,
                 )
                 side_effects = api.persist_dispatch_side_effects(bundle, result, agent_id=agent_id, runtime="acp")
                 return normalized, result, side_effects, warnings
@@ -433,6 +435,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 auto_run_reason = "bootstrap_task_created"
                 bundle, coder_context_path = api.build_coder_context(task_id=selected_task_id, task_guid=selected_task_guid)
                 message = api.build_run_message(bundle)
+                acp_cleanup = api.acp_cleanup_mode_from_coder(config_payload.get("coder") if isinstance(config_payload.get("coder"), dict) else {})
                 resolved_backend, run_result, run_side_effects, run_warnings = run_coder_backend(
                     backend="acp",
                     agent_id=str(run_args.agent or "codex"),
@@ -443,17 +446,26 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                     session_key=str(run_args.session_key or "main"),
                     label=api.build_run_label(root, str(run_args.agent or "codex"), selected_task_id),
                     bundle=bundle,
+                    acp_cleanup=acp_cleanup,
                 )
                 run_payload = {
                     "coder_context_path": str(coder_context_path),
                     "backend": resolved_backend,
                     "agent_id": str(run_args.agent or "codex"),
+                    "task_id": selected_task_id,
+                    "task_guid": selected_task_guid,
                     "session_key": str(run_args.session_key or "main"),
+                    "acp_cleanup": acp_cleanup if resolved_backend == "acp" else "",
                     "timeout": int(run_args.timeout or 900),
                     "thinking": str(run_args.thinking or "high"),
                     "message_preview": message[:1200],
                     "result": run_result,
                     "side_effects": run_side_effects,
+                    "cleanup_plan": api.build_run_cleanup_plan(
+                        backend=resolved_backend,
+                        session_key=str(run_args.session_key or "main"),
+                        acp_cleanup=acp_cleanup if resolved_backend == "acp" else "",
+                    ),
                     "warnings": run_warnings,
                 }
                 api.write_pm_bundle("last-run.json", run_payload)
@@ -599,6 +611,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         timeout_seconds = int(args.timeout or coder.get("timeout") or 900)
         thinking = str(args.thinking or coder.get("thinking") or "high").strip()
         session_key = str(args.session_key or coder.get("session_key") or "main").strip() or "main"
+        acp_cleanup = api.acp_cleanup_mode_from_coder(coder)
         message = api.build_run_message(bundle)
         task = api.resolve_effective_task(bundle)
         task_id = str(task.get("task_id") or "").strip()
@@ -626,22 +639,32 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 session_key=session_key,
                 label=label,
                 bundle=bundle,
+                acp_cleanup=acp_cleanup,
             )
         backend_warnings.extend(backend_runtime_warnings)
         run_id = ""
         if isinstance(side_effects, dict):
             run_id = str(side_effects.get("run_id") or "").strip()
+        cleanup_plan = api.build_run_cleanup_plan(
+            backend=backend,
+            session_key=session_key,
+            acp_cleanup=acp_cleanup if backend == "acp" else "",
+        )
         payload = {
             "coder_context_path": str(path),
             "backend": backend,
             "agent_id": agent_id,
+            "task_id": task_id,
+            "task_guid": str(task.get("guid") or "").strip(),
             "session_key": session_key,
+            "acp_cleanup": acp_cleanup if backend == "acp" else "",
             "timeout": timeout_seconds,
             "thinking": thinking,
             "message_preview": message[:1200],
             "result": result,
             "side_effects": side_effects,
             "run_id": run_id,
+            "cleanup_plan": cleanup_plan,
             "warnings": backend_warnings,
             "runtime_banner": build_runtime_banner(
                 backend=backend,
@@ -772,7 +795,18 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         comment_payload: dict[str, Any] | None = None
         if completion_comment:
             comment_payload = api.create_task_comment(guid, completion_comment)
-        payload = api.patch_task(guid, {"completed_at": api.now_iso()})
+        completed_at = api.now_iso()
+        payload = api.patch_task(guid, {"completed_at": completed_at})
+        last_run = api.load_json_file(api.pm_file("last-run.json"))
+        finalized_run, cleanup_result = api.finalize_last_run_for_completion(
+            last_run,
+            task_id=str(task.get("task_id") or args.task_id or "").strip(),
+            task_guid=guid,
+            completed_at=completed_at,
+            finalized_at=api.now_iso(),
+        )
+        if isinstance(finalized_run, dict):
+            api.write_pm_run_record(finalized_run, run_id=str(finalized_run.get("run_id") or "").strip())
         context = api.refresh_context_cache()
         return emit(
             {
@@ -785,6 +819,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 "commit_url": commit_url,
                 "upload_result": upload_result,
                 "result": payload,
+                "cleanup_result": cleanup_result,
                 "context_path": str(api.pm_file("current-context.json")),
                 "next_task": context.get("next_task"),
             }

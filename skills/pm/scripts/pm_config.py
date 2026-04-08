@@ -115,6 +115,7 @@ def default_config() -> dict[str, Any]:
             "thinking": "high",
             "session_key": "main",
             "auto_switch_to_acp": False,
+            "acp_cleanup": "delete",
         },
         "tasklist_name": "选育溯源档案",
         "task_prefix": "T",
