@@ -252,16 +252,19 @@ def run_codex_cli(
     model = str(agent_id or "").strip()
     if model and model not in {"codex", "main"}:
         cmd[2:2] = ["-m", model]
+    effective_timeout = max(300, int(timeout_seconds or 900))
     try:
         proc = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             check=False,
-            timeout=max(30, int(timeout_seconds or 900)),
+            timeout=effective_timeout,
         )
     except subprocess.TimeoutExpired as exc:
-        raise SystemExit(f"codex exec timed out after {timeout_seconds}s") from exc
+        raise SystemExit(
+            f"codex exec timed out after {timeout_seconds}s (effective minimum: {effective_timeout}s for codex-cli runs)"
+        ) from exc
     output_text = output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
     try:
         output_path.unlink(missing_ok=True)

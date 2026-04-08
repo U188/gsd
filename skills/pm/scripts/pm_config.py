@@ -109,7 +109,7 @@ def default_config() -> dict[str, Any]:
             "state_title": "STATE",
         },
         "coder": {
-            "backend": "acp",
+            "backend": "codex-cli",
             "agent_id": "codex",
             "timeout": 900,
             "thinking": "high",

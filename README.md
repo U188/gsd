@@ -87,7 +87,8 @@ Recommended config:
 ```json
 {
   "task": { "backend": "local" },
-  "doc": { "backend": "repo" }
+  "doc": { "backend": "repo" },
+  "coder": { "backend": "codex-cli", "agent_id": "codex" }
 }
 ```
 
@@ -97,6 +98,7 @@ Good for:
 - PM/coder/GSD routing validation
 - bootstrap verification
 - installation debugging without Feishu
+- Telegram/local-first delivery with Codex CLI as the default worker path
 
 ### Integrated
 
@@ -106,6 +108,12 @@ Use this when you want the real collaboration loop:
 - agent binding and ACP execution
 - Feishu bot / group / task / doc integration
 - progress bridge and authorization flows
+
+Current operator recommendation on OpenClaw `2026.3.24`:
+
+- use `codex-cli` as the default coder backend for local-first operation
+- keep `backend=acp` available as an explicit path when you want native ACP child sessions
+- if `sessions_spawn` is used through Gateway HTTP, expose it with `gateway.tools.allow = ["sessions_spawn", "sessions_send"]`
 
 ## Quick Start
 

@@ -157,10 +157,44 @@ npm install -g acpx@latest
 acpx --help
 ```
 
+如果 coder 要走 Codex，还要补齐 ACPX 依赖：
+
+```bash
+npm install -g @zed-industries/codex-acp@0.11.1
+npm install -g @zed-industries/codex-acp-linux-x64@0.9.2
+```
+
+Gateway 如果要经 HTTP `/tools/invoke` 调 `sessions_spawn`，还要放开默认 deny：
+
+```json5
+{
+  "gateway": {
+    "tools": {
+      "allow": ["sessions_spawn", "sessions_send"]
+    }
+  }
+}
+```
+
+最小验收命令：
+
+```bash
+codex login status
+/usr/local/node/bin/acpx codex sessions new
+python3 skills/pm/scripts/pm.py run --backend codex-cli --agent codex --timeout 120
+python3 skills/pm/scripts/pm.py run --backend acp --agent codex --timeout 120
+```
+
+补充说明：
+
+- `codex-cli` 路径在仓库里设置了 **300 秒最小有效超时**，避免短任务参数把真实 Codex 执行窗口截断。
+- 所以即使传 `--timeout 120`，`codex-cli` 这条路径也会至少给 300 秒执行时间。
+
 注意：
 
 - `acpx` CLI 装好了，不代表旧的 `openclaw.json` 插件配置一定合法
 - 如果 `openclaw config validate` 仍报 `plugin not found`，优先修配置，而不是重复安装 CLI
+- 在 OpenClaw `2026.3.24` 上，推荐把 `codex-cli` 当稳定默认路径，把 `acp` 当显式启用路径
 
 #### Feishu 插件
 

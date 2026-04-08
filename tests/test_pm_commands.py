@@ -21,6 +21,7 @@ class _FakeApi:
     def __init__(self) -> None:
         self.spawn_calls = 0
         self.openclaw_calls = 0
+        self.codex_calls = 0
         self.persist_dispatch_calls = 0
         self.persist_run_calls = 0
         self.last_bundle = {"current_task": {"task_id": "T1"}}
@@ -59,7 +60,8 @@ class _FakeApi:
         return {"status": "ok", "summary": "completed", "result": {"payloads": []}}
 
     def run_codex_cli(self, **kwargs):
-        raise AssertionError("codex-cli should not be used in this test")
+        self.codex_calls += 1
+        return {"backend": "codex-cli", "status": "ok", "summary": "completed", "result": {"payloads": []}}
 
     def persist_dispatch_side_effects(self, bundle: dict, result: dict, *, agent_id: str, runtime: str) -> dict:
         self.persist_dispatch_calls += 1
@@ -75,7 +77,7 @@ class _FakeApi:
 
 
 class PmCommandsFallbackTest(unittest.TestCase):
-    def test_cmd_run_falls_back_from_acp_to_openclaw_when_sessions_spawn_unavailable(self) -> None:
+    def test_cmd_run_falls_back_from_acp_to_codex_cli_when_sessions_spawn_unavailable(self) -> None:
         api = _FakeApi()
         handlers = build_command_handlers(api)
         args = argparse.Namespace(
@@ -94,14 +96,15 @@ class PmCommandsFallbackTest(unittest.TestCase):
 
         self.assertEqual(code, 0)
         payload = json.loads(buf.getvalue())
-        self.assertEqual(payload["backend"], "openclaw")
+        self.assertEqual(payload["backend"], "codex-cli")
         self.assertEqual(api.spawn_calls, 1)
-        self.assertEqual(api.openclaw_calls, 1)
+        self.assertEqual(api.codex_calls, 1)
+        self.assertEqual(api.openclaw_calls, 0)
         self.assertEqual(api.persist_dispatch_calls, 0)
         self.assertEqual(api.persist_run_calls, 1)
-        self.assertIn("fell back to backend=openclaw", payload["warnings"][0])
+        self.assertIn("fell back to backend=codex-cli", payload["warnings"][0])
         self.assertEqual(api.last_written_name, "last-run.json")
-        self.assertEqual(api.last_written_payload["backend"], "openclaw")
+        self.assertEqual(api.last_written_payload["backend"], "codex-cli")
 
 
 if __name__ == "__main__":

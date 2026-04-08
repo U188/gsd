@@ -47,12 +47,18 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 return normalized, result, side_effects, warnings
             except SystemExit as exc:
                 error_text = str(exc).strip()
-                if "Tool not available: sessions_spawn" not in error_text:
+                if "Tool not available: sessions_spawn" in error_text:
+                    warnings.append(
+                        "ACP dispatch unavailable on this OpenClaw build (`sessions_spawn` is not exposed via /tools/invoke); fell back to backend=codex-cli."
+                    )
+                    normalized = "codex-cli"
+                elif "acpx exited with code 1" in error_text or "Internal error" in error_text:
+                    warnings.append(
+                        "ACP runtime failed while creating the Codex session; fell back to backend=codex-cli."
+                    )
+                    normalized = "codex-cli"
+                else:
                     raise
-                warnings.append(
-                    "ACP dispatch unavailable on this OpenClaw build (`sessions_spawn` is not exposed via /tools/invoke); fell back to backend=openclaw."
-                )
-                normalized = "openclaw"
         if normalized == "codex-cli":
             result = api.run_codex_cli(
                 agent_id=agent_id,
@@ -317,7 +323,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             config_payload["doc"].setdefault("state_title", "STATE")
         config_payload.setdefault("coder", api.default_config()["coder"])
         if isinstance(config_payload["coder"], dict):
-            config_payload["coder"].setdefault("backend", "acp")
+            config_payload["coder"].setdefault("backend", "codex-cli")
             config_payload["coder"].setdefault("agent_id", args.agent or "codex")
             config_payload["coder"].setdefault("timeout", int(args.timeout or 900))
             config_payload["coder"].setdefault("thinking", args.thinking or "high")
