@@ -12,6 +12,8 @@ except ImportError:  # Python 3.8 fallback
 
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_DIR_ENV_VARS = ("PM_STATE_DIR", "OPENCLAW_PM_STATE_DIR")
+STATE_DIR_NAME = "openclaw-coding-kit"
+LEGACY_STATE_DIR_NAME = "openclaw-pm-coder-kit"
 
 
 def _first_env_path(env_vars: tuple[str, ...]) -> Path | None:
@@ -20,6 +22,14 @@ def _first_env_path(env_vars: tuple[str, ...]) -> Path | None:
         if raw:
             return Path(raw).expanduser()
     return None
+
+
+def _prefer_legacy_state_dir(current: Path, legacy: Path) -> Path:
+    if current.exists():
+        return current
+    if legacy.exists():
+        return legacy
+    return current
 
 
 def default_state_dir() -> Path:
@@ -34,8 +44,16 @@ def default_state_dir() -> Path:
         return Path(appdata) / "OpenClawPMCoder" / "state"
     xdg_state_home = str(os.environ.get("XDG_STATE_HOME") or "").strip()
     if xdg_state_home:
-        return Path(xdg_state_home) / "openclaw-pm-coder-kit" / "state"
-    return Path.home() / ".local" / "state" / "openclaw-pm-coder-kit" / "pm"
+        xdg_root = Path(xdg_state_home)
+        return _prefer_legacy_state_dir(
+            xdg_root / STATE_DIR_NAME / "state",
+            xdg_root / LEGACY_STATE_DIR_NAME / "state",
+        )
+    local_state_root = Path.home() / ".local" / "state"
+    return _prefer_legacy_state_dir(
+        local_state_root / STATE_DIR_NAME / "pm",
+        local_state_root / LEGACY_STATE_DIR_NAME / "pm",
+    )
 
 
 STATE_DIR = default_state_dir()

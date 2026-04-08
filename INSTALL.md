@@ -230,7 +230,7 @@ export OPENCLAW_CONFIG=/abs/path/to/real/openclaw.json
 这次远端验证机实际使用的是：
 
 ```bash
-export OPENCLAW_CONFIG=/home/openclaw/.openclaw-pm-coder-kit/openclaw.json
+export OPENCLAW_CONFIG=/home/openclaw/.openclaw-coding-kit/openclaw.json
 ```
 
 路径建议：

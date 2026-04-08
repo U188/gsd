@@ -174,7 +174,7 @@ python3 skills/pm/scripts/pm.py init --project-name "测试项目" --english-nam
 ## 仓库结构
 
 ```text
-openclaw-pm-coder-kit/
+openclaw-coding-kit/
   README.md
   INSTALL.md
   examples/

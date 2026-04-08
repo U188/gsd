@@ -2,8 +2,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const repoRoot = "/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit";
+const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(scriptDir, "..");
 const input = path.join(repoRoot, "diagrams", "pm-coder-bridge-architecture.drawio");
 const svgOutput = path.join(repoRoot, "diagrams", "pm-coder-bridge-architecture.drawio.svg");
 const pngOutput = path.join(repoRoot, "diagrams", "pm-coder-bridge-architecture.drawio.png");
