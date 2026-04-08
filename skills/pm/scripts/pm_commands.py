@@ -18,6 +18,27 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
 
+    def should_prefer_acp_for_bundle(bundle: dict[str, Any], message: str, timeout_seconds: int) -> tuple[bool, list[str]]:
+        reasons: list[str] = []
+        bootstrap = bundle.get("bootstrap") if isinstance(bundle.get("bootstrap"), dict) else {}
+        current_task = bundle.get("current_task") if isinstance(bundle.get("current_task"), dict) else {}
+        handoff = bundle.get("handoff_contract") if isinstance(bundle.get("handoff_contract"), dict) else {}
+        required_reads = handoff.get("required_reads") if isinstance(handoff.get("required_reads"), list) else []
+        task_description = str(current_task.get("description") or "").strip()
+        project_mode = str(bootstrap.get("project_mode") or "").strip().lower()
+
+        if project_mode == "brownfield":
+            reasons.append("brownfield 项目默认优先 ACP")
+        if len(required_reads) >= 3:
+            reasons.append("required reads 较多")
+        if len(task_description) >= 160:
+            reasons.append("任务描述较长")
+        if len(message) >= 1800:
+            reasons.append("coder handoff 较长")
+        if timeout_seconds >= 180:
+            reasons.append("任务超时预算较长")
+        return (len(reasons) > 0), reasons
+
     def run_coder_backend(
         *,
         backend: str,
@@ -577,7 +598,16 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         task = api.resolve_effective_task(bundle)
         task_id = str(task.get("task_id") or "").strip()
         label = api.build_run_label(api.project_root_path(), agent_id, task_id)
-        backend, result, side_effects, backend_warnings = run_coder_backend(
+        backend_warnings: list[str] = []
+        explicit_backend = bool(str(args.backend or "").strip())
+        if not explicit_backend and backend == "codex-cli":
+            prefer_acp, prefer_reasons = should_prefer_acp_for_bundle(bundle, message, timeout_seconds)
+            if prefer_acp:
+                backend = "acp"
+                backend_warnings.append(
+                    "Auto-switched backend from codex-cli to acp for this run: " + "；".join(prefer_reasons)
+                )
+        backend, result, side_effects, backend_runtime_warnings = run_coder_backend(
             backend=backend,
             agent_id=agent_id,
             message=message,
@@ -588,6 +618,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             label=label,
             bundle=bundle,
         )
+        backend_warnings.extend(backend_runtime_warnings)
         payload = {
             "coder_context_path": str(path),
             "backend": backend,

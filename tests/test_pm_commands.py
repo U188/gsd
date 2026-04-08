@@ -32,7 +32,7 @@ class _FakeApi:
 
     def coder_config(self) -> dict:
         return {
-            "backend": "acp",
+            "backend": "codex-cli",
             "agent_id": "codex",
             "timeout": 60,
             "thinking": "high",
@@ -105,6 +105,46 @@ class PmCommandsFallbackTest(unittest.TestCase):
         self.assertIn("fell back to backend=codex-cli", payload["warnings"][0])
         self.assertEqual(api.last_written_name, "last-run.json")
         self.assertEqual(api.last_written_payload["backend"], "codex-cli")
+
+    def test_cmd_run_auto_switches_default_codex_cli_to_acp_for_brownfield_bundle(self) -> None:
+        api = _FakeApi()
+        api.last_bundle = {
+            "bootstrap": {"project_mode": "brownfield"},
+            "current_task": {
+                "task_id": "T2",
+                "description": "这是一个较长的任务说明。" * 20,
+            },
+            "handoff_contract": {
+                "required_reads": ["pm.json", ".pm/current-context.json", ".pm/bootstrap.json"],
+            },
+        }
+        handlers = build_command_handlers(api)
+        args = argparse.Namespace(
+            task_id="T2",
+            task_guid="",
+            backend="",
+            agent="codex",
+            timeout=120,
+            thinking="high",
+            session_key="main",
+        )
+
+        def _spawn_ok(**kwargs):
+            api.spawn_calls += 1
+            return {"status": "accepted", "result": {"payloads": []}}
+
+        api.spawn_acp_session = _spawn_ok
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = handlers["run"](args)
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["backend"], "acp")
+        self.assertEqual(api.spawn_calls, 1)
+        self.assertEqual(api.codex_calls, 0)
+        self.assertIn("Auto-switched backend from codex-cli to acp", payload["warnings"][0])
 
 
 if __name__ == "__main__":
