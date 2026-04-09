@@ -71,8 +71,21 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
     def clone_run_record(record: dict[str, Any] | None) -> dict[str, Any] | None:
         return dict(record) if isinstance(record, dict) else None
 
-    def load_last_run_record() -> dict[str, Any] | None:
-        return clone_run_record(api.load_json_file(api.pm_file("last-run.json")))
+    def load_last_run_record(*, task_id: str = "", task_guid: str = "") -> dict[str, Any] | None:
+        record = clone_run_record(api.load_json_file(api.pm_file("last-run.json")))
+        if not isinstance(record, dict):
+            return None
+        normalized_task_id = str(task_id or "").strip()
+        normalized_task_guid = str(task_guid or "").strip()
+        if normalized_task_id:
+            run_task_id = str(record.get("task_id") or "").strip()
+            if run_task_id and run_task_id != normalized_task_id:
+                return None
+        if normalized_task_guid:
+            run_task_guid = str(record.get("task_guid") or "").strip()
+            if run_task_guid and run_task_guid != normalized_task_guid:
+                return None
+        return record
 
     def load_run_record(run_id: str) -> dict[str, Any] | None:
         loader = getattr(api, "load_run_record", None)
@@ -85,6 +98,42 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         path = api.pm_dir_path() / "runs" / f"{normalized_run_id}.json"
         return clone_run_record(api.load_json_file(path))
 
+    def find_latest_task_run_record(*, task_id: str = "", task_guid: str = "") -> tuple[dict[str, Any] | None, str]:
+        normalized_task_id = str(task_id or "").strip()
+        normalized_task_guid = str(task_guid or "").strip()
+        runs_dir = api.pm_dir_path() / "runs"
+        if not runs_dir.exists():
+            return None, ""
+        matches: list[tuple[tuple[float, str, str], dict[str, Any], str]] = []
+        for path in runs_dir.glob("*.json"):
+            record = clone_run_record(api.load_json_file(path))
+            if not isinstance(record, dict):
+                continue
+            run_task_id = str(record.get("task_id") or "").strip()
+            run_task_guid = str(record.get("task_guid") or "").strip()
+            if normalized_task_id and run_task_id != normalized_task_id:
+                continue
+            if normalized_task_guid and run_task_guid != normalized_task_guid:
+                continue
+            try:
+                mtime = float(path.stat().st_mtime)
+            except OSError:
+                mtime = 0.0
+            time_hint = str(
+                record.get("finalized_at")
+                or record.get("reviewed_at")
+                or record.get("completed_at")
+                or record.get("review_bypassed_at")
+                or ""
+            ).strip()
+            resolved_run_id = str(record.get("run_id") or path.stem).strip()
+            matches.append(((mtime, time_hint, resolved_run_id), record, resolved_run_id))
+        if not matches:
+            return None, ""
+        matches.sort(key=lambda item: item[0], reverse=True)
+        _, record, resolved_run_id = matches[0]
+        return record, resolved_run_id
+
     def resolve_run_record(*, task_id: str = "", task_guid: str = "", run_id: str = "") -> tuple[dict[str, Any], str]:
         normalized_run_id = str(run_id or "").strip()
         if normalized_run_id:
@@ -92,17 +141,21 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             if not isinstance(record, dict):
                 raise SystemExit(f"run record not found: {normalized_run_id}")
             return record, normalized_run_id
+        normalized_task_id = str(task_id or "").strip()
+        normalized_task_guid = str(task_guid or "").strip()
+        if normalized_task_id or normalized_task_guid:
+            matched_record, resolved_run_id = find_latest_task_run_record(task_id=normalized_task_id, task_guid=normalized_task_guid)
+            if isinstance(matched_record, dict):
+                return matched_record, resolved_run_id
+            last_run = load_last_run_record(task_id=normalized_task_id, task_guid=normalized_task_guid)
+            if isinstance(last_run, dict):
+                resolved_run_id = str(last_run.get("run_id") or "").strip()
+                return last_run, resolved_run_id
+            target = normalized_task_id or normalized_task_guid
+            raise SystemExit(f"run record not found for task: {target}")
         last_run = load_last_run_record()
         if not isinstance(last_run, dict):
             raise SystemExit("last-run record not found")
-        normalized_task_id = str(task_id or "").strip()
-        normalized_task_guid = str(task_guid or "").strip()
-        run_task_id = str(last_run.get("task_id") or "").strip()
-        run_task_guid = str(last_run.get("task_guid") or "").strip()
-        if normalized_task_id and run_task_id and normalized_task_id != run_task_id:
-            raise SystemExit(f"last-run record does not match task: {normalized_task_id}")
-        if normalized_task_guid and run_task_guid and normalized_task_guid != run_task_guid:
-            raise SystemExit(f"last-run record does not match task guid: {normalized_task_guid}")
         resolved_run_id = str(last_run.get("run_id") or "").strip()
         return last_run, resolved_run_id
 
@@ -317,6 +370,21 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         api.write_pm_run_record(payload, run_id=run_id)
         if isinstance(monitor, dict) and str(monitor.get("status") or "").strip() != "not-applicable":
             persist_monitor_on_run_record(payload, monitor)
+            kickoff_monitor = getattr(api, "kickoff_run_monitor", None)
+            if callable(kickoff_monitor):
+                kickoff_result = kickoff_monitor(
+                    run_id,
+                    reason=f"pm {'rerun' if rerun_of_run_id else 'run-reviewed'} {task_id or run_id}",
+                )
+                refreshed_monitor = kickoff_result.get("monitor") if isinstance(kickoff_result, dict) else None
+                if isinstance(refreshed_monitor, dict):
+                    monitor = refreshed_monitor
+                    if rerun_of_run_id and str(monitor.get("status") or "").strip() != "not-applicable":
+                        monitor = dict(monitor)
+                        monitor["replaces_run_id"] = rerun_of_run_id
+                    payload["monitor"] = monitor
+                    api.write_pm_run_record(payload, run_id=run_id)
+                    persist_monitor_on_run_record(payload, monitor)
         return payload
 
     def should_prefer_acp_for_bundle(bundle: dict[str, Any], message: str, timeout_seconds: int) -> tuple[bool, list[str]]:
@@ -1118,7 +1186,14 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         guid = str(task.get("guid") or "").strip()
         if not guid:
             raise SystemExit(f"task missing guid: {args.task_id or args.task_guid}")
-        last_run = load_last_run_record()
+        task_id_text = str(task.get("task_id") or args.task_id or "").strip()
+        last_run = None
+        if task_id_text or guid:
+            matched_run, _ = find_latest_task_run_record(task_id=task_id_text, task_guid=guid)
+            if isinstance(matched_run, dict):
+                last_run = matched_run
+        if not isinstance(last_run, dict):
+            last_run = load_last_run_record(task_id=task_id_text, task_guid=guid)
         latest_run_id = str((last_run or {}).get("run_id") or "").strip()
         latest_review_status = str((last_run or {}).get("review_status") or "").strip().lower()
         latest_review_feedback = str((last_run or {}).get("review_feedback") or "").strip()

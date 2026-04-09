@@ -29,6 +29,7 @@ class PmMonitorTest(unittest.TestCase):
         cfg = pm_config.default_config()
         self.assertEqual(cfg["monitor"]["enabled"], True)
         self.assertEqual(cfg["monitor"]["interval_minutes"], 5)
+        self.assertEqual(cfg["monitor"]["notify_on_start"], True)
 
     def test_monitor_config_merges_defaults_with_active_config(self) -> None:
         pm_config.ACTIVE_CONFIG.clear()
@@ -36,6 +37,7 @@ class PmMonitorTest(unittest.TestCase):
         merged = pm_config.monitor_config()
         self.assertEqual(merged["enabled"], False)
         self.assertEqual(merged["interval_minutes"], 9)
+        self.assertEqual(merged["notify_on_start"], True)
         self.assertEqual(merged["auto_stop_on_complete"], True)
 
     def test_should_start_monitor_for_supported_reviewed_backends(self) -> None:
@@ -92,6 +94,8 @@ class PmMonitorTest(unittest.TestCase):
         self.assertEqual(state["continuation_contract"]["progress_updates_are_terminal"], False)
         self.assertEqual(state["reporting_contract"]["delivery_mode"], "announce")
         self.assertEqual(state["reporting_contract"]["payload_kind"], "agentTurn")
+        self.assertEqual(state["kickoff_enabled"], True)
+        self.assertEqual(state["kickoff_status"], "pending")
         self.assertTrue(str(state["monitor_path"]).endswith(".pm/monitors/run-1.json"))
 
     def test_build_monitor_prompt_points_to_run_and_monitor_records(self) -> None:
@@ -112,6 +116,7 @@ class PmMonitorTest(unittest.TestCase):
         self.assertIn("Cron job id: job-1", prompt)
         self.assertIn("Backend: codex-cli", prompt)
         self.assertIn("Treat progress updates as non-terminal", prompt)
+        self.assertIn("first tick is force-run immediately", prompt)
 
     def test_build_user_visible_followup_job_uses_announce_contract(self) -> None:
         job = build_user_visible_followup_job(

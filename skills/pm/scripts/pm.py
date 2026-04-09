@@ -517,6 +517,10 @@ def cron_remove(job_id: str, *, session_key: str = "main") -> dict[str, Any]:
     return run_bridge("cron", "remove", {"jobId": job_id}, session_key=session_key)
 
 
+def cron_run(job_id: str, *, session_key: str = "main", run_mode: str = "force") -> dict[str, Any]:
+    return run_bridge("cron", "run", {"jobId": job_id, "runMode": run_mode}, session_key=session_key)
+
+
 def sanitize_feishu_markdown(text: str) -> str:
     raw = str(text or "")
     if not raw.strip():
@@ -1149,9 +1153,46 @@ def start_run_monitor(
     job_info = add_result.get("job") if isinstance(add_result.get("job"), dict) else {}
     state["cron_job_id"] = str(job_info.get("jobId") or add_result.get("jobId") or "").strip()
     state["status"] = "active" if state["cron_job_id"] else "cron-error"
+    if not state["cron_job_id"] and str(state.get("kickoff_status") or "").strip() == "pending":
+        state["kickoff_status"] = "skipped-no-cron"
     state["cron_add_result"] = add_result
     write_monitor_state(state)
     return state
+
+
+def kickoff_run_monitor(run_id: str, *, reason: str = "pm monitor start") -> dict[str, Any]:
+    state = load_monitor_state(run_id)
+    if not isinstance(state, dict):
+        return {"status": "not-found", "run_id": str(run_id or "").strip()}
+    if not bool(state.get("kickoff_enabled", True)):
+        state["kickoff_status"] = "disabled"
+        write_monitor_state(state)
+        return {"status": "disabled", "monitor": state}
+    if str(state.get("status") or "").strip() != "active":
+        return {"status": "not-active", "monitor": state}
+    if str(state.get("kickoff_status") or "").strip() == "sent":
+        return {"status": "already-sent", "monitor": state, "kickoff_result": state.get("kickoff_result")}
+    cron_job_id = str(state.get("cron_job_id") or "").strip()
+    if not cron_job_id:
+        state["kickoff_status"] = "missing-cron-job"
+        write_monitor_state(state)
+        return {"status": "missing-cron-job", "monitor": state}
+    requested_at = now_iso()
+    normalized_reason = str(reason or "").strip() or "pm monitor start"
+    try:
+        kickoff_result = cron_run(cron_job_id, session_key=str(state.get("cron_session_key") or "main"), run_mode="force")
+        state["kickoff_status"] = "sent"
+    except SystemExit as exc:
+        kickoff_result = {"status": "error", "message": str(exc)}
+        state["kickoff_status"] = "error"
+    except Exception as exc:  # pragma: no cover - defensive guard for bridge/runtime failures
+        kickoff_result = {"status": "error", "message": str(exc)}
+        state["kickoff_status"] = "error"
+    state["kickoff_requested_at"] = requested_at
+    state["kickoff_reason"] = normalized_reason
+    state["kickoff_result"] = kickoff_result
+    write_monitor_state(state)
+    return {"status": str(state.get("kickoff_status") or "").strip() or "unknown", "monitor": state, "kickoff_result": kickoff_result}
 
 
 def stop_run_monitor(run_id: str, *, reason: str = "pm monitor-stop") -> dict[str, Any]:
@@ -1743,6 +1784,7 @@ def build_cli_api() -> SimpleNamespace:
         route_gsd_work=route_gsd_work,
         scaffold_workspace=scaffold_workspace,
         start_run_monitor=start_run_monitor,
+        kickoff_run_monitor=kickoff_run_monitor,
         stop_run_monitor=stop_run_monitor,
         sync_gsd_docs=sync_gsd_docs,
         sync_gsd_progress=sync_gsd_progress,
@@ -1776,7 +1818,10 @@ def main() -> int:
         args.config = str((Path(str(args.repo_root)).expanduser().resolve() / "pm.json"))
     ACTIVE_CONFIG.clear()
     ACTIVE_CONFIG.update(load_config(args.config))
-    if hasattr(args, "repo_root") and not getattr(args, "repo_root", ""):
+    if hasattr(args, "repo_root") and not getattr(args, "repo_root", "") and command_name in {"init", "workspace-init"}:
+        config_path = Path(str(ACTIVE_CONFIG.get("_config_path") or "")).expanduser()
+        args.repo_root = str(config_path.resolve().parent if str(config_path) else Path.cwd().expanduser().resolve())
+    elif hasattr(args, "repo_root") and not getattr(args, "repo_root", ""):
         args.repo_root = repo_root()
     if hasattr(args, "kind") and not getattr(args, "kind", ""):
         args.kind = task_kind()

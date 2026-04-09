@@ -68,6 +68,7 @@ class _FakeApi:
                 "mode": "cron",
                 "interval_minutes": 5,
                 "stalled_after_minutes": 20,
+                "notify_on_start": True,
                 "notify_on_review_pending": True,
                 "notify_on_review_failed": True,
                 "auto_stop_on_complete": True,
@@ -175,6 +176,21 @@ class _FakeApi:
     def ensure_task_started(self, task: dict) -> None:
         return None
 
+    def resolve_optional_text_input(self, content: str, content_file: str) -> str:
+        return content
+
+    def upload_task_attachments(self, task: dict, task_id: str, files: list[str]) -> dict:
+        return {"status": "skipped", "uploaded_count": 0}
+
+    def current_head_commit_url(self, repo_root: str) -> str:
+        return ""
+
+    def build_completion_comment(self, content: str, commit_url: str, uploaded_count: int) -> str:
+        return content
+
+    def patch_task(self, guid: str, payload: dict) -> dict:
+        return {"guid": guid, **payload}
+
     def task_id_for_output(self, task_id: str) -> str:
         return task_id
 
@@ -201,6 +217,9 @@ class _FakeApi:
         normalized_run_id = str(run_id or payload.get("run_id") or "").strip()
         if normalized_run_id:
             self.run_records[normalized_run_id] = dict(payload)
+            runs_dir = self._pm_dir / "runs"
+            runs_dir.mkdir(parents=True, exist_ok=True)
+            (runs_dir / f"{normalized_run_id}.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def start_run_monitor(self, *, repo_root: str, task_id: str, task_guid: str, run_id: str, backend: str, side_effects: dict, session_key: str) -> dict:
         return {
@@ -212,7 +231,19 @@ class _FakeApi:
             "repo_root": repo_root,
             "child_session_key": str(side_effects.get("session_key") or ""),
             "cron_job_id": f"job-{run_id}",
+            "kickoff_enabled": True,
+            "kickoff_status": "pending",
         }
+
+    def kickoff_run_monitor(self, run_id: str, *, reason: str = "pm monitor start") -> dict:
+        monitor = {}
+        record = self.run_records.get(run_id)
+        if isinstance(record, dict) and isinstance(record.get("monitor"), dict):
+            monitor = dict(record["monitor"])
+        monitor["kickoff_status"] = "sent"
+        monitor["kickoff_reason"] = reason
+        monitor["kickoff_result"] = {"status": "ok", "jobId": monitor.get("cron_job_id")}
+        return {"status": "sent", "monitor": monitor, "kickoff_result": monitor["kickoff_result"]}
 
     def stop_run_monitor(self, run_id: str, *, reason: str = "pm monitor-stop") -> dict:
         monitor = {}
@@ -257,7 +288,106 @@ class PmCommandsFallbackTest(unittest.TestCase):
         self.assertEqual(api.last_locked_task_id, "T1")
         self.assertEqual(api.last_written_name, "last-run.json")
         self.assertEqual(api.last_written_payload["backend"], "codex-cli")
-        self.assertTrue(str(api.last_written_run_id).startswith("run-t1-"))
+
+    def test_review_targets_latest_run_for_requested_task_not_global_last_run(self) -> None:
+        api = _FakeApi()
+        handlers = build_command_handlers(api)
+        api.write_pm_run_record(
+            {
+                "run_id": "run-t1",
+                "task_id": "T1",
+                "task_guid": "guid-T1",
+                "review_required": True,
+                "review_status": "pending",
+                "attempt": 1,
+                "review_round": 1,
+            },
+            run_id="run-t1",
+        )
+        api.write_pm_run_record(
+            {
+                "run_id": "run-t2",
+                "task_id": "T2",
+                "task_guid": "guid-T2",
+                "review_required": True,
+                "review_status": "pending",
+                "attempt": 1,
+                "review_round": 1,
+            },
+            run_id="run-t2",
+        )
+
+        args = argparse.Namespace(
+            task_id="T1",
+            task_guid="",
+            run_id="",
+            verdict="fail",
+            feedback="redo",
+            feedback_file="",
+            reviewer="qa",
+        )
+
+        with io.StringIO() as buf, contextlib.redirect_stdout(buf):
+            code = handlers["review"](args)
+            payload = json.loads(buf.getvalue())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["run_id"], "run-t1")
+        self.assertEqual(payload["review_status"], "failed")
+
+    def test_complete_targets_requested_tasks_latest_run_not_global_last_run(self) -> None:
+        api = _FakeApi()
+        handlers = build_command_handlers(api)
+        api.write_pm_run_record(
+            {
+                "run_id": "run-t1",
+                "task_id": "T1",
+                "task_guid": "guid-T1",
+                "backend": "codex-cli",
+                "session_key": "main",
+                "review_required": True,
+                "review_status": "passed",
+                "attempt": 1,
+                "review_round": 1,
+                "monitor": {"status": "active", "run_id": "run-t1"},
+            },
+            run_id="run-t1",
+        )
+        api.write_pm_run_record(
+            {
+                "run_id": "run-t2",
+                "task_id": "T2",
+                "task_guid": "guid-T2",
+                "backend": "codex-cli",
+                "session_key": "main",
+                "review_required": True,
+                "review_status": "pending",
+                "attempt": 1,
+                "review_round": 1,
+                "monitor": {"status": "active", "run_id": "run-t2"},
+            },
+            run_id="run-t2",
+        )
+        args = argparse.Namespace(
+            task_id="T1",
+            task_guid="",
+            include_completed=False,
+            content="done",
+            content_file="",
+            file=[],
+            commit_url="",
+            skip_head_commit_url=True,
+            force_review_bypass=False,
+        )
+
+        with io.StringIO() as buf, contextlib.redirect_stdout(buf):
+            code = handlers["complete"](args)
+            payload = json.loads(buf.getvalue())
+
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["task_id"], "T1")
+        self.assertEqual(payload["monitor_stop"]["monitor"]["run_id"], "run-t1")
+        self.assertEqual(api.last_written_run_id, "run-t1")
 
     def test_cmd_run_auto_switches_default_codex_cli_to_acp_for_brownfield_bundle(self) -> None:
         api = _FakeApi()
@@ -331,6 +461,8 @@ class PmCommandsFallbackTest(unittest.TestCase):
         payload = json.loads(buf.getvalue())
         self.assertEqual(payload["monitor"]["status"], "active")
         self.assertEqual(payload["monitor"]["cron_job_id"], "job-run-1")
+        self.assertEqual(payload["monitor"]["kickoff_status"], "sent")
+        self.assertIn("pm run-reviewed", payload["monitor"]["kickoff_reason"])
 
     def test_cmd_run_reviewed_starts_monitor_for_codex_cli(self) -> None:
         api = _FakeApi()
@@ -354,6 +486,7 @@ class PmCommandsFallbackTest(unittest.TestCase):
         self.assertEqual(payload["backend"], "codex-cli")
         self.assertEqual(payload["monitor"]["status"], "active")
         self.assertEqual(payload["monitor"]["backend"], "codex-cli")
+        self.assertEqual(payload["monitor"]["kickoff_status"], "sent")
 
     def test_cmd_complete_stops_active_monitor(self) -> None:
         api = _FakeApi()

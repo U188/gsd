@@ -127,6 +127,11 @@ def build_monitor_state(
         "cron_session_key": "main",
         "cron_job_id": "",
         "cron_schedule": _monitor_schedule(int(monitor_cfg.get("interval_minutes") or 5)),
+        "kickoff_enabled": bool(monitor_cfg.get("notify_on_start", True)),
+        "kickoff_status": "pending" if bool(monitor_cfg.get("notify_on_start", True)) else "disabled",
+        "kickoff_requested_at": "",
+        "kickoff_reason": "",
+        "kickoff_result": None,
         "prompt_path": str(prompt_path),
         "run_record_path": str(run_record_path),
         "monitor_path": str(monitor_path),
@@ -164,6 +169,7 @@ def build_monitor_prompt(state: dict[str, Any]) -> str:
             "If review is passed but task is not completed, emit one complete reminder.",
             "If the run is active but stalled, emit one continue reminder.",
             "This is a user-visible follow-up contract: do not silently downgrade it to a non-announcing reminder.",
+            "The first tick is force-run immediately after monitor creation, so operators do not wait a full interval for the first report.",
             "If nothing changed, reply with NO_REPLY.",
         ]
     )

@@ -10,6 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PM_SCRIPT = REPO_ROOT / "skills" / "pm" / "scripts" / "pm.py"
+REPO_FAKE_BRIDGE = REPO_ROOT / "examples" / "fake-openclaw-lark-bridge.py"
 
 
 class PmLocalCliTest(unittest.TestCase):
@@ -19,54 +20,6 @@ class PmLocalCliTest(unittest.TestCase):
         planning.mkdir(parents=True)
         for name in ("PROJECT.md", "REQUIREMENTS.md", "ROADMAP.md", "STATE.md"):
             (planning / name).write_text(f"# {name}\n", encoding="utf-8")
-
-    @staticmethod
-    def _write_fake_bridge(root: Path) -> Path:
-        script = root / "fake-bridge.py"
-        script.write_text(
-            "\n".join(
-                [
-                    "#!/usr/bin/env python3",
-                    "from __future__ import annotations",
-                    "import argparse",
-                    "import json",
-                    "from pathlib import Path",
-                    "",
-                    "parser = argparse.ArgumentParser()",
-                    "parser.add_argument('--tool', required=True)",
-                    "parser.add_argument('--action', default='')",
-                    "parser.add_argument('--args', default='{}')",
-                    "parser.add_argument('--session-key', default='')",
-                    "ns = parser.parse_args()",
-                    "payload = json.loads(ns.args or '{}')",
-                    "state_path = Path.cwd() / '.pm' / 'fake-bridge-log.json'",
-                    "state_path.parent.mkdir(parents=True, exist_ok=True)",
-                    "state = {'calls': [], 'next_job_id': 1}",
-                    "if state_path.exists():",
-                    "    state = json.loads(state_path.read_text(encoding='utf-8'))",
-                    "calls = state.setdefault('calls', [])",
-                    "calls.append({'tool': ns.tool, 'action': ns.action, 'args': payload, 'session_key': ns.session_key})",
-                    "if ns.tool == 'sessions_spawn':",
-                    "    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')",
-                    "    print(json.dumps({'status': 'ok', 'result': {'details': {'childSessionKey': 'child-1', 'runId': 'run-acp-1'}}}, ensure_ascii=False))",
-                    "elif ns.tool == 'cron' and ns.action == 'add':",
-                    "    job_id = f\"job-{state.get('next_job_id', 1)}\"",
-                    "    state['next_job_id'] = int(state.get('next_job_id', 1)) + 1",
-                    "    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')",
-                    "    print(json.dumps({'status': 'ok', 'job': {'jobId': job_id}}, ensure_ascii=False))",
-                    "elif ns.tool == 'cron' and ns.action == 'remove':",
-                    "    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')",
-                    "    print(json.dumps({'status': 'ok', 'removed': payload.get('jobId') or ''}, ensure_ascii=False))",
-                    "else:",
-                    "    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')",
-                    "    print(json.dumps({'status': 'ok'}, ensure_ascii=False))",
-                ]
-            )
-            + "\n",
-            encoding="utf-8",
-        )
-        script.chmod(0o755)
-        return script
 
     @staticmethod
     def _write_fake_acpx(root: Path) -> Path:
@@ -96,7 +49,6 @@ class PmLocalCliTest(unittest.TestCase):
         }
         config_path = root / "pm.json"
         config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
-        bridge = self._write_fake_bridge(root)
         self._write_fake_acpx(root)
         fake_codex = root / "fake-codex"
         fake_codex.write_text(
@@ -117,10 +69,21 @@ class PmLocalCliTest(unittest.TestCase):
         )
         fake_codex.chmod(0o755)
         env = os.environ.copy()
-        env["OPENCLAW_LARK_BRIDGE_SCRIPT"] = str(bridge)
+        env["OPENCLAW_LARK_BRIDGE_SCRIPT"] = str(REPO_FAKE_BRIDGE)
         env["CODEX_BIN"] = str(fake_codex)
         env["PATH"] = str(root) + os.pathsep + env.get("PATH", "")
         return config_path, env
+
+    @staticmethod
+    def _write_fake_openclaw(root: Path) -> Path:
+        script = root / "openclaw"
+        script.write_text(
+            "#!/bin/sh\n"
+            "printf '%s\\n' '{\"status\":\"ok\",\"summary\":\"completed\",\"result\":{\"payloads\":[{\"text\":\"openclaw worker ok\",\"mediaUrl\":null}]}}'\n",
+            encoding="utf-8",
+        )
+        script.chmod(0o755)
+        return script
 
     def _run_pm(self, root: Path, config_path: Path, env: dict[str, str], *args: str, check: bool = True):
         return subprocess.run(
@@ -386,6 +349,7 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertEqual(first_run["monitor"]["status"], "active")
             self.assertEqual(first_run["monitor"]["watch_mode"], "child-session")
             self.assertTrue(first_run["monitor"]["cron_job_id"])
+            self.assertEqual(first_run["monitor"]["kickoff_status"], "sent")
             monitor_status = run_ok("monitor-status", "--task-id", "T1")
             self.assertEqual(monitor_status["monitor"]["status"], "active")
             self.assertEqual(monitor_status["monitor"]["run_id"], first_run["run_id"])
@@ -397,6 +361,9 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertEqual(job["payload"]["kind"], "agentTurn")
             self.assertEqual(job["sessionTarget"], "isolated")
             self.assertEqual(job["schedule"]["kind"], "every")
+            cron_run = next(item for item in bridge_calls if item["tool"] == "cron" and item["action"] == "run")
+            self.assertEqual(cron_run["args"]["jobId"], first_run["monitor"]["cron_job_id"])
+            self.assertEqual(cron_run["args"]["runMode"], "force")
 
     def test_run_reviewed_creates_monitor_for_codex_cli_runs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -412,11 +379,32 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertEqual(first_run["monitor"]["status"], "active")
             self.assertEqual(first_run["monitor"]["watch_mode"], "run-record")
             self.assertTrue(first_run["monitor"]["cron_job_id"])
+            self.assertEqual(first_run["monitor"]["kickoff_status"], "sent")
             monitor_file = root / ".pm" / "monitors" / f"{first_run['run_id']}.json"
             self.assertTrue(monitor_file.exists())
             monitor_status = run_ok("monitor-status", "--run-id", first_run["run_id"])
             self.assertEqual(monitor_status["monitor"]["status"], "active")
             self.assertEqual(monitor_status["monitor"]["backend"], "codex-cli")
+
+    def test_run_reviewed_creates_monitor_for_openclaw_runs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+            self._write_fake_openclaw(root)
+
+            def run_ok(*args: str) -> dict:
+                proc = self._run_pm(root, config_path, env, *args)
+                return json.loads(proc.stdout)
+
+            run_ok("create", "--summary", "OpenClaw monitor task")
+            first_run = run_ok("run-reviewed", "--task-id", "T1", "--backend", "openclaw", "--agent", "front")
+            self.assertEqual(first_run["backend"], "openclaw")
+            self.assertEqual(first_run["monitor"]["status"], "active")
+            self.assertEqual(first_run["monitor"]["backend"], "openclaw")
+            self.assertEqual(first_run["monitor"]["kickoff_status"], "sent")
+            monitor_status = run_ok("monitor-status", "--task-id", "T1")
+            self.assertEqual(monitor_status["monitor"]["run_id"], first_run["run_id"])
+            self.assertEqual(monitor_status["monitor"]["backend"], "openclaw")
 
     def test_rerun_stops_previous_monitor_before_starting_new_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -489,6 +477,68 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertEqual(first["status"], "stopped")
             self.assertEqual(second["status"], "already-stopped")
 
+    def test_review_and_rerun_resolve_latest_run_for_requested_task(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            def run_ok(*args: str) -> dict:
+                proc = self._run_pm(root, config_path, env, *args)
+                return json.loads(proc.stdout)
+
+            run_ok("create", "--summary", "Task one")
+            run_ok("create", "--summary", "Task two")
+            first_run = run_ok("run-reviewed", "--task-id", "T1", "--backend", "codex-cli", "--agent", "codex")
+            second_run = run_ok("run-reviewed", "--task-id", "T2", "--backend", "codex-cli", "--agent", "codex")
+
+            monitor_status = run_ok("monitor-status", "--task-id", "T1")
+            self.assertEqual(monitor_status["run_id"], first_run["run_id"])
+            self.assertEqual(monitor_status["monitor"]["task_id"], "T1")
+
+            failed_review = run_ok(
+                "review",
+                "--task-id",
+                "T1",
+                "--verdict",
+                "fail",
+                "--feedback",
+                "redo T1",
+                "--reviewer",
+                "qa",
+            )
+            self.assertEqual(failed_review["run_id"], first_run["run_id"])
+            self.assertEqual(failed_review["review_status"], "failed")
+
+            rerun = run_ok("rerun", "--task-id", "T1", "--backend", "codex-cli", "--agent", "codex")
+            self.assertEqual(rerun["task_id"], "T1")
+            self.assertEqual(rerun["rerun_of_run_id"], first_run["run_id"])
+            self.assertNotEqual(rerun["run_id"], second_run["run_id"])
+
+    def test_complete_uses_requested_tasks_latest_run_not_global_last_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            def run_ok(*args: str) -> dict:
+                proc = self._run_pm(root, config_path, env, *args)
+                return json.loads(proc.stdout)
+
+            run_ok("create", "--summary", "Complete task one")
+            run_ok("create", "--summary", "Complete task two")
+            first_run = run_ok("run-reviewed", "--task-id", "T1", "--backend", "codex-cli", "--agent", "codex")
+            run_ok("review", "--task-id", "T1", "--verdict", "pass", "--reviewer", "qa")
+            second_run = run_ok("run-reviewed", "--task-id", "T2", "--backend", "codex-cli", "--agent", "codex")
+
+            completed = run_ok("complete", "--task-id", "T1", "--content", "done after pass")
+            self.assertEqual(completed["task_id"], "T1")
+            self.assertEqual(completed["monitor_stop"]["status"], "stopped")
+            self.assertEqual(completed["monitor_stop"]["monitor"]["run_id"], first_run["run_id"])
+
+            last_run = json.loads((root / ".pm" / "last-run.json").read_text(encoding="utf-8"))
+            self.assertEqual(last_run["run_id"], first_run["run_id"])
+            latest_t2 = json.loads((root / ".pm" / "runs" / f"{second_run['run_id']}.json").read_text(encoding="utf-8"))
+            self.assertEqual(latest_t2["review_status"], "pending")
+
     def test_repo_root_prefers_target_repo_pm_json_without_explicit_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as other_tmp:
             root = Path(tmp)
@@ -525,6 +575,94 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertEqual(payload["task_id"], "T1")
             self.assertEqual(payload["task"]["tasklists"][0]["tasklist_guid"], "local:demo")
             self.assertTrue(str(payload["context_path"]).startswith(str(root / ".pm")))
+
+    def test_init_with_repo_root_writes_config_and_context_into_target_repo(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as other_tmp:
+            root = Path(tmp)
+            outside = Path(other_tmp)
+            planning = root / ".planning"
+            planning.mkdir(parents=True)
+            for name in ("PROJECT.md", "REQUIREMENTS.md", "ROADMAP.md", "STATE.md"):
+                (planning / name).write_text(f"# {name}\n", encoding="utf-8")
+
+            proc = subprocess.run(
+                [
+                    "python3",
+                    str(PM_SCRIPT),
+                    "init",
+                    "--repo-root",
+                    str(root),
+                    "--project-name",
+                    "demo",
+                    "--task-backend",
+                    "local",
+                    "--doc-backend",
+                    "repo",
+                    "--write-config",
+                    "--skip-auto-run",
+                    "--skip-bootstrap-task",
+                    "--no-auth-bundle",
+                ],
+                cwd=str(outside),
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            payload = json.loads(proc.stdout)
+
+            self.assertEqual(payload["repo_root"], str(root))
+            self.assertEqual(payload["config_path"], str(root / "pm.json"))
+            self.assertTrue((root / "pm.json").exists())
+            self.assertFalse((outside / "pm.json").exists())
+
+    def test_init_in_copied_repo_rewrites_stale_repo_root_to_current_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            planning = root / ".planning"
+            planning.mkdir(parents=True)
+            for name in ("PROJECT.md", "REQUIREMENTS.md", "ROADMAP.md", "STATE.md"):
+                (planning / name).write_text(f"# {name}\n", encoding="utf-8")
+            (root / "pm.json").write_text(
+                json.dumps(
+                    {
+                        "project": {"name": "demo"},
+                        "repo_root": "/tmp/original-repo",
+                        "task": {"backend": "local", "tasklist_name": "demo", "prefix": "T", "kind": "task"},
+                        "doc": {"backend": "repo", "folder_name": "demo"},
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            proc = subprocess.run(
+                [
+                    "python3",
+                    str(PM_SCRIPT),
+                    "init",
+                    "--project-name",
+                    "demo",
+                    "--task-backend",
+                    "local",
+                    "--doc-backend",
+                    "repo",
+                    "--write-config",
+                    "--skip-auto-run",
+                    "--skip-bootstrap-task",
+                    "--no-auth-bundle",
+                ],
+                cwd=str(root),
+                text=True,
+                capture_output=True,
+                check=True,
+            )
+            payload = json.loads(proc.stdout)
+            written = json.loads((root / "pm.json").read_text(encoding="utf-8"))
+
+            self.assertEqual(payload["repo_root"], str(root))
+            self.assertEqual(payload["config_path"], str(root / "pm.json"))
+            self.assertEqual(written["repo_root"], str(root))
 
 
 if __name__ == "__main__":

@@ -209,9 +209,10 @@ python3 skills/pm/scripts/pm.py run --backend acp --agent codex --timeout 120
 - 如果显式使用 `backend=acp`，默认 `coder.acp_cleanup = "delete"`，run-mode 子会话在任务完成后按机制自动回收；只有需要保留现场排障时才改成 `"keep"`
 - 默认收口链路改为 `pm run-reviewed` -> `pm review --verdict pass|fail` -> 失败时 `pm rerun` -> `pm complete`
 - `pm complete` 会拒绝该任务最近一次 run 仍为 `pending` / `failed` 的情况；特殊情况必须显式传 `--force-review-bypass`，并且 bypass 会写入对应 run record 与 `.pm/last-run.json`
-- monitor loop 现在作为**继续推进机制**挂在 reviewed PM run 上；它依赖 bridge 侧暴露 `cron.add` 和 `cron.remove`，并通过 isolated `agentTurn` cron job 读取绝对 `.pm` 路径做巡检
+- monitor loop 现在作为**继续推进机制**挂在 reviewed PM run 上；它依赖 bridge 侧暴露 `cron.add`、`cron.run` 和 `cron.remove`，并通过 isolated `agentTurn` cron job 读取绝对 `.pm` 路径做巡检
 - 这条 continuation guard 不再只盯 ACP；当前支持 `acp`、`codex-cli`、`openclaw` 三类 PM backend
 - user-visible 的 follow-up / reporter job 现在有显式代码约束：必须走 `agentTurn + announce`，且不能绑到 `sessionTarget=main`；这样不会退化成只提醒 AI、不通知操作者的静默 cron
+- `monitor.notify_on_start = true` 时，reviewed run 在写完 run record 后会立刻 `cron.run --force` 一次 monitor job，避免操作者傻等下一个轮询窗口
 - monitor 状态固定写入 `.pm/monitors/<run_id>.json`，并镜像到 `.pm/last-run.json` / `.pm/runs/<run_id>.json`
 
 Monitor operator flow:

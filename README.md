@@ -100,6 +100,7 @@ Recommended config:
     "mode": "cron",
     "interval_minutes": 5,
     "stalled_after_minutes": 20,
+    "notify_on_start": true,
     "notify_on_review_pending": true,
     "notify_on_review_failed": true,
     "auto_stop_on_complete": true
@@ -134,7 +135,8 @@ Current operator recommendation on OpenClaw `2026.3.24`:
 - the default operator loop is now `pm run-reviewed` -> `pm review --verdict pass|fail` -> `pm rerun` when failed -> `pm complete` only after pass
 - reviewed PM runs now create a monitor record under `.pm/monitors/<run_id>.json` and attach the same `monitor` block to `.pm/last-run.json` and `.pm/runs/<run_id>.json`; this continuation guard exists so progress does not rely on operator memory
 - if `sessions_spawn` is used through Gateway HTTP, expose it with `gateway.tools.allow = ["sessions_spawn", "sessions_send"]`
-- monitor mode also needs bridge access to `cron.add` and `cron.remove`; PM schedules the continuation guard as an isolated `agentTurn` cron job that reads absolute `.pm` paths from the prompt and treats progress updates as non-terminal
+- monitor mode also needs bridge access to `cron.add`, `cron.run`, and `cron.remove`; PM schedules the continuation guard as an isolated `agentTurn` cron job that reads absolute `.pm` paths from the prompt and treats progress updates as non-terminal
+- reviewed runs now force-run the monitor once right after cron creation when `monitor.notify_on_start=true`, so operators do not wait a full interval for the first proactive report
 - user-visible follow-up jobs are now an explicit code contract inside `pm_monitor.py`: they must use `payload.kind=agentTurn`, `delivery.mode=announce`, and a non-`main` session target, so this behavior does not rely on operator memory
 
 ## Review Loop
@@ -155,6 +157,7 @@ Behavior summary:
 
 - `run-reviewed` behaves like `run` but marks the run record as review-required with `review_status=pending`
 - `run-reviewed` now starts one continuation monitor for supported PM backends (`acp`, `codex-cli`, `openclaw`) and persists deterministic monitor state in `.pm/monitors/<run_id>.json`
+- when `monitor.notify_on_start=true`, `run-reviewed` force-runs that monitor once immediately after writing the run record, so the first proactive report is mechanism-driven instead of waiting for the next interval
 - `review --verdict fail` records structured reviewer metadata plus feedback history and keeps completion blocked
 - `rerun` creates a new run record, carries the latest failed feedback into the coder handoff, increments `attempt` and `review_round`, links `rerun_of_run_id`, and stops the previous active monitor before starting the new one
 - `monitor-status` reads the explicit `--run-id` or resolves the requested task's latest run from `.pm/runs/*.json`, so operators can inspect cron metadata without opening JSON files manually
