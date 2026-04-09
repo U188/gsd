@@ -1,0 +1,104 @@
+from __future__ import annotations
+
+import tempfile
+import unittest
+from pathlib import Path
+import sys
+
+
+SCRIPT_DIR = Path(__file__).resolve().parents[1] / "skills" / "pm" / "scripts"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import pm_config
+from pm_monitor import build_monitor_job, build_monitor_prompt, build_monitor_state, should_start_monitor
+
+
+class PmMonitorTest(unittest.TestCase):
+    def tearDown(self) -> None:
+        pm_config.ACTIVE_CONFIG.clear()
+
+    def test_default_config_contains_monitor_block(self) -> None:
+        cfg = pm_config.default_config()
+        self.assertEqual(cfg["monitor"]["enabled"], True)
+        self.assertEqual(cfg["monitor"]["interval_minutes"], 5)
+
+    def test_monitor_config_merges_defaults_with_active_config(self) -> None:
+        pm_config.ACTIVE_CONFIG.clear()
+        pm_config.ACTIVE_CONFIG.update({"monitor": {"enabled": False, "interval_minutes": 9}})
+        merged = pm_config.monitor_config()
+        self.assertEqual(merged["enabled"], False)
+        self.assertEqual(merged["interval_minutes"], 9)
+        self.assertEqual(merged["auto_stop_on_complete"], True)
+
+    def test_should_start_monitor_only_for_async_acp_runs(self) -> None:
+        self.assertEqual(
+            should_start_monitor(
+                backend="acp",
+                side_effects={"session_key": "child"},
+                monitor_cfg={"enabled": True},
+            ),
+            True,
+        )
+        self.assertEqual(
+            should_start_monitor(
+                backend="codex-cli",
+                side_effects={},
+                monitor_cfg={"enabled": True},
+            ),
+            False,
+        )
+
+    def test_build_monitor_state_captures_run_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            state = build_monitor_state(
+                repo_root=root,
+                task_id="T1",
+                task_guid="guid-1",
+                run_id="run-1",
+                backend="acp",
+                side_effects={"session_key": "child-1"},
+                monitor_cfg={"interval_minutes": 5},
+                now_iso="2026-04-09T03:00:00Z",
+            )
+        self.assertEqual(state["run_id"], "run-1")
+        self.assertEqual(state["child_session_key"], "child-1")
+        self.assertEqual(state["status"], "pending-cron")
+        self.assertTrue(str(state["monitor_path"]).endswith(".pm/monitors/run-1.json"))
+
+    def test_build_monitor_prompt_points_to_run_and_monitor_records(self) -> None:
+        state = {
+            "repo_root": "/repo",
+            "pm_config_path": "/repo/pm.json",
+            "run_record_path": "/repo/.pm/runs/run-1.json",
+            "monitor_path": "/repo/.pm/monitors/run-1.json",
+            "cron_job_id": "job-1",
+        }
+        prompt = build_monitor_prompt(state)
+        self.assertIn("Config: /repo/pm.json", prompt)
+        self.assertIn("Run record: /repo/.pm/runs/run-1.json", prompt)
+        self.assertIn("Monitor record: /repo/.pm/monitors/run-1.json", prompt)
+        self.assertIn("Cron job id: job-1", prompt)
+
+    def test_build_monitor_job_uses_agent_turn_cron_payload(self) -> None:
+        state = {
+            "run_id": "run-1",
+            "cron_schedule": {"kind": "every", "everyMs": 300000},
+            "repo_root": "/repo",
+            "pm_config_path": "/repo/pm.json",
+            "run_record_path": "/repo/.pm/runs/run-1.json",
+            "monitor_path": "/repo/.pm/monitors/run-1.json",
+            "cron_job_id": "job-1",
+        }
+        job = build_monitor_job(state, monitor_cfg={"stalled_after_minutes": 20})
+        self.assertEqual(job["name"], "pm-monitor-run-1")
+        self.assertEqual(job["schedule"]["kind"], "every")
+        self.assertEqual(job["payload"]["kind"], "agentTurn")
+        self.assertEqual(job["sessionTarget"], "isolated")
+        self.assertEqual(job["payload"]["timeoutSeconds"], 1200)
+        self.assertIn("Run record: /repo/.pm/runs/run-1.json", job["payload"]["message"])
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -46,6 +46,28 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             return bool(getter())
         return bool(review_cfg().get("sync_state"))
 
+    def monitor_cfg() -> dict[str, Any]:
+        getter = getattr(api, "monitor_config", None)
+        if callable(getter):
+            value = getter()
+            if isinstance(value, dict):
+                return value
+        defaults = api.default_config()
+        monitor = defaults.get("monitor") if isinstance(defaults, dict) else None
+        return monitor if isinstance(monitor, dict) else {}
+
+    def clone_monitor_state(record: dict[str, Any] | None) -> dict[str, Any] | None:
+        monitor = record.get("monitor") if isinstance(record, dict) else None
+        return dict(monitor) if isinstance(monitor, dict) else None
+
+    def persist_monitor_on_run_record(run_record: dict[str, Any], monitor: dict[str, Any]) -> None:
+        normalized_run_id = str(run_record.get("run_id") or "").strip()
+        if not normalized_run_id:
+            return
+        updated = dict(run_record)
+        updated["monitor"] = dict(monitor)
+        api.write_pm_run_record(updated, run_id=normalized_run_id)
+
     def clone_run_record(record: dict[str, Any] | None) -> dict[str, Any] | None:
         return dict(record) if isinstance(record, dict) else None
 
@@ -268,7 +290,33 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             reviewed_at=reviewed_at,
             review_history_items=review_history_items or [],
         )
+        monitor = {"status": "not-applicable"}
+        if rerun_of_run_id:
+            prior_record = load_run_record(rerun_of_run_id)
+            prior_monitor = clone_monitor_state(prior_record)
+            if isinstance(prior_monitor, dict) and str(prior_monitor.get("status") or "").strip() == "active":
+                stop_result = api.stop_run_monitor(rerun_of_run_id, reason=f"pm rerun -> {run_id}")
+                stopped_monitor = stop_result.get("monitor") if isinstance(stop_result, dict) else None
+                if isinstance(stopped_monitor, dict):
+                    persist_monitor_on_run_record(prior_record or {}, stopped_monitor)
+        started_monitor = api.start_run_monitor(
+            repo_root=str(api.project_root_path()),
+            task_id=task_id,
+            task_guid=str(task.get("guid") or "").strip(),
+            run_id=run_id,
+            backend=backend,
+            side_effects=side_effects,
+            session_key=session_key,
+        )
+        if isinstance(started_monitor, dict):
+            monitor = started_monitor
+            if rerun_of_run_id and str(monitor.get("status") or "").strip() != "not-applicable":
+                monitor = dict(monitor)
+                monitor["replaces_run_id"] = rerun_of_run_id
+        payload["monitor"] = monitor
         api.write_pm_run_record(payload, run_id=run_id)
+        if isinstance(monitor, dict) and str(monitor.get("status") or "").strip() != "not-applicable":
+            persist_monitor_on_run_record(payload, monitor)
         return payload
 
     def should_prefer_acp_for_bundle(bundle: dict[str, Any], message: str, timeout_seconds: int) -> tuple[bool, list[str]]:
@@ -1138,6 +1186,19 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             completed_at=completed_at,
             finalized_at=api.now_iso(),
         )
+        monitor_stop = None
+        if (
+            isinstance(finalized_run, dict)
+            and bool(monitor_cfg().get("auto_stop_on_complete"))
+            and isinstance(finalized_run.get("monitor"), dict)
+            and str(finalized_run["monitor"].get("status") or "").strip() == "active"
+        ):
+            run_id = str(finalized_run.get("run_id") or "").strip()
+            monitor_stop = api.stop_run_monitor(run_id, reason="pm complete")
+            stopped_monitor = monitor_stop.get("monitor") if isinstance(monitor_stop, dict) else None
+            if isinstance(stopped_monitor, dict):
+                finalized_run = dict(finalized_run)
+                finalized_run["monitor"] = dict(stopped_monitor)
         if isinstance(finalized_run, dict):
             api.write_pm_run_record(finalized_run, run_id=str(finalized_run.get("run_id") or "").strip())
         context = api.refresh_context_cache()
@@ -1154,10 +1215,28 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 "result": payload,
                 "review_bypass": review_bypass,
                 "cleanup_result": cleanup_result,
+                "monitor_stop": monitor_stop,
                 "context_path": str(api.pm_file("current-context.json")),
                 "next_task": context.get("next_task"),
             }
         )
+
+    def cmd_monitor_status(args: argparse.Namespace) -> int:
+        run_record, resolved_run_id = resolve_run_record(task_id=args.task_id, task_guid=args.task_guid, run_id=args.run_id)
+        monitor = clone_monitor_state(run_record)
+        if not isinstance(monitor, dict):
+            return emit({"status": "not-found", "run_id": resolved_run_id, "monitor": None})
+        return emit({"status": "ok", "run_id": resolved_run_id, "monitor": monitor})
+
+    def cmd_monitor_stop(args: argparse.Namespace) -> int:
+        run_record, resolved_run_id = resolve_run_record(task_id=args.task_id, task_guid=args.task_guid, run_id=args.run_id)
+        result = api.stop_run_monitor(resolved_run_id, reason=str(args.reason or "").strip() or "pm monitor-stop")
+        monitor = result.get("monitor") if isinstance(result, dict) else None
+        if isinstance(monitor, dict):
+            persist_monitor_on_run_record(run_record, monitor)
+        payload = dict(result) if isinstance(result, dict) else {"status": "unknown"}
+        payload["run_id"] = resolved_run_id
+        return emit(payload)
 
     def cmd_update_description(args: argparse.Namespace) -> int:
         task = api.get_task_record_by_guid(args.task_guid) if args.task_guid else api.get_task_record(args.task_id, include_completed=args.include_completed)
@@ -1291,6 +1370,8 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         "run_reviewed": cmd_run_reviewed,
         "review": cmd_review,
         "rerun": cmd_rerun,
+        "monitor_status": cmd_monitor_status,
+        "monitor_stop": cmd_monitor_stop,
         "create": cmd_create,
         "get": cmd_get,
         "comment": cmd_comment,

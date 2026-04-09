@@ -224,6 +224,19 @@ def build_parser(*, handlers: dict[str, Any]) -> argparse.ArgumentParser:
     rerun.add_argument("--session-key", default="")
     rerun.set_defaults(func=handlers["rerun"])
 
+    monitor_status = sub.add_parser("monitor-status")
+    monitor_status.add_argument("--task-id", default="")
+    monitor_status.add_argument("--task-guid", default="")
+    monitor_status.add_argument("--run-id", default="")
+    monitor_status.set_defaults(func=handlers["monitor_status"])
+
+    monitor_stop = sub.add_parser("monitor-stop")
+    monitor_stop.add_argument("--task-id", default="")
+    monitor_stop.add_argument("--task-guid", default="")
+    monitor_stop.add_argument("--run-id", default="")
+    monitor_stop.add_argument("--reason", default="pm monitor-stop")
+    monitor_stop.set_defaults(func=handlers["monitor_stop"])
+
     create = sub.add_parser("create")
     create.add_argument("--summary", required=True)
     create.add_argument("--request", default="")

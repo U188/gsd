@@ -94,6 +94,15 @@ Recommended config:
     "enforce_on_complete": true,
     "sync_comment": true,
     "sync_state": true
+  },
+  "monitor": {
+    "enabled": true,
+    "mode": "cron",
+    "interval_minutes": 5,
+    "stalled_after_minutes": 20,
+    "notify_on_review_pending": true,
+    "notify_on_review_failed": true,
+    "auto_stop_on_complete": true
   }
 }
 ```
@@ -123,26 +132,33 @@ Current operator recommendation on OpenClaw `2026.3.24`:
 - when `backend=acp`, default `coder.acp_cleanup = "delete"` so run-mode child sessions are auto-reclaimed after completion; set it to `"keep"` only when you deliberately want to preserve the child session for debugging
 - task completion is finalized by `pm complete`; it now writes machine-readable cleanup metadata back into `.pm/last-run.json` instead of relying on operator memory
 - the default operator loop is now `pm run-reviewed` -> `pm review --verdict pass|fail` -> `pm rerun` when failed -> `pm complete` only after pass
+- async ACP runs now create a monitor record under `.pm/monitors/<run_id>.json` and attach the same `monitor` block to `.pm/last-run.json` and `.pm/runs/<run_id>.json`
 - if `sessions_spawn` is used through Gateway HTTP, expose it with `gateway.tools.allow = ["sessions_spawn", "sessions_send"]`
+- monitor mode also needs bridge access to `cron.add` and `cron.remove`; PM schedules the monitor as an isolated `agentTurn` cron job that reads absolute `.pm` paths from the prompt
 
 ## Review Loop
 
 Recommended PM operator flow:
 
 ```bash
-python3 skills/pm/scripts/pm.py run-reviewed --task-id T1
+python3 skills/pm/scripts/pm.py run-reviewed --task-id T1 --backend acp --agent codex
+python3 skills/pm/scripts/pm.py monitor-status --task-id T1
 python3 skills/pm/scripts/pm.py review --task-id T1 --verdict fail --feedback "List the problems to fix" --reviewer qa
-python3 skills/pm/scripts/pm.py rerun --task-id T1
+python3 skills/pm/scripts/pm.py rerun --task-id T1 --backend acp --agent codex
 python3 skills/pm/scripts/pm.py review --task-id T1 --verdict pass --reviewer qa
+python3 skills/pm/scripts/pm.py monitor-stop --run-id run-acp-1 --reason "manual intervention"
 python3 skills/pm/scripts/pm.py complete --task-id T1 --content "done"
 ```
 
 Behavior summary:
 
 - `run-reviewed` behaves like `run` but marks the run record as review-required with `review_status=pending`
+- eligible async ACP runs also start one monitor cron and persist deterministic monitor state in `.pm/monitors/<run_id>.json`
 - `review --verdict fail` records structured reviewer metadata plus feedback history and keeps completion blocked
-- `rerun` creates a new run record, carries the latest failed feedback into the coder handoff, increments `attempt` and `review_round`, and links `rerun_of_run_id`
-- `complete` now rejects `pending` and `failed` latest runs unless you explicitly pass `--force-review-bypass`, which is also recorded in the run record
+- `rerun` creates a new run record, carries the latest failed feedback into the coder handoff, increments `attempt` and `review_round`, links `rerun_of_run_id`, and stops the previous active monitor before starting the new one
+- `monitor-status` reads the explicit `--run-id` or falls back to the task's latest run so operators can inspect cron metadata without opening JSON files manually
+- `monitor-stop` is idempotent and persists the final stop result back into monitor and run records
+- `complete` now rejects `pending` and `failed` latest runs unless you explicitly pass `--force-review-bypass`, which is also recorded in the run record; when the latest run has an active monitor and monitor auto-stop is enabled, `complete` also closes the cron automatically
 
 ## Quick Start
 

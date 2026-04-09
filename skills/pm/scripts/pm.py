@@ -43,6 +43,7 @@ from pm_config import doc_titles
 from pm_config import ensure_pm_dir
 from pm_config import find_openclaw_config_path
 from pm_config import load_config
+from pm_config import monitor_config
 from pm_config import pm_dir_path
 from pm_config import pm_file
 from pm_config import project_name
@@ -127,6 +128,10 @@ from pm_local_backend import list_attachments as list_local_task_attachments
 from pm_local_backend import list_comments as list_local_task_comments
 from pm_local_backend import list_tasklist_tasks as list_local_tasklist_tasks
 from pm_local_backend import patch_task as patch_local_task
+from pm_monitor import build_monitor_job
+from pm_monitor import build_monitor_prompt
+from pm_monitor import build_monitor_state
+from pm_monitor import should_start_monitor
 from pm_runtime import resolve_runtime_path
 from pm_runtime import run_codex_cli
 from pm_runtime import run_openclaw_agent
@@ -489,6 +494,7 @@ def spawn_acp_session(
     thinking: str = "high",
     label: str = "",
     session_key: str = "main",
+    cleanup: str = "delete",
 ) -> dict[str, Any]:
     return dispatch_acp_session(
         run_bridge,
@@ -499,7 +505,16 @@ def spawn_acp_session(
         thinking=thinking,
         label=label,
         session_key=session_key,
+        cleanup=cleanup,
     )
+
+
+def cron_add(job: dict[str, Any], *, session_key: str = "main") -> dict[str, Any]:
+    return run_bridge("cron", "add", {"job": job}, session_key=session_key)
+
+
+def cron_remove(job_id: str, *, session_key: str = "main") -> dict[str, Any]:
+    return run_bridge("cron", "remove", {"jobId": job_id}, session_key=session_key)
 
 
 def sanitize_feishu_markdown(text: str) -> str:
@@ -1081,6 +1096,77 @@ def load_run_record(run_id: str) -> dict[str, Any] | None:
     return load_json_file(pm_dir_path() / "runs" / f"{normalized_run_id}.json")
 
 
+def write_monitor_state(state: dict[str, Any]) -> list[Path]:
+    normalized_run_id = str(state.get("run_id") or "").strip()
+    if not normalized_run_id:
+        raise SystemExit("monitor state missing run_id")
+    monitor_path = Path(str(state.get("monitor_path") or "")).expanduser()
+    prompt_path = Path(str(state.get("prompt_path") or "")).expanduser()
+    write_repo_json(monitor_path, state)
+    prompt_path.parent.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(build_monitor_prompt(state), encoding="utf-8")
+    return [monitor_path, prompt_path]
+
+
+def load_monitor_state(run_id: str) -> dict[str, Any] | None:
+    normalized_run_id = str(run_id or "").strip()
+    if not normalized_run_id:
+        return None
+    return load_json_file(pm_dir_path() / "monitors" / f"{normalized_run_id}.json")
+
+
+def start_run_monitor(
+    *,
+    repo_root: str,
+    task_id: str,
+    task_guid: str,
+    run_id: str,
+    backend: str,
+    side_effects: dict[str, Any],
+    session_key: str,
+) -> dict[str, Any]:
+    cfg = monitor_config()
+    if not should_start_monitor(backend=backend, side_effects=side_effects, monitor_cfg=cfg):
+        return {"status": "not-applicable"}
+    state = build_monitor_state(
+        repo_root=repo_root,
+        task_id=task_id,
+        task_guid=task_guid,
+        run_id=run_id,
+        backend=backend,
+        side_effects=side_effects,
+        monitor_cfg=cfg,
+        now_iso=now_iso(),
+    )
+    state["cron_session_key"] = str(session_key or "main").strip() or "main"
+    job = build_monitor_job(state, monitor_cfg=cfg)
+    add_result = cron_add(job, session_key=state["cron_session_key"])
+    job_info = add_result.get("job") if isinstance(add_result.get("job"), dict) else {}
+    state["cron_job_id"] = str(job_info.get("jobId") or add_result.get("jobId") or "").strip()
+    state["status"] = "active" if state["cron_job_id"] else "cron-error"
+    state["cron_add_result"] = add_result
+    write_monitor_state(state)
+    return state
+
+
+def stop_run_monitor(run_id: str, *, reason: str = "pm monitor-stop") -> dict[str, Any]:
+    state = load_monitor_state(run_id)
+    if not isinstance(state, dict):
+        return {"status": "not-found", "run_id": str(run_id or "").strip()}
+    if str(state.get("status") or "").strip() == "stopped":
+        return {"status": "already-stopped", "monitor": state}
+    remove_result = None
+    cron_job_id = str(state.get("cron_job_id") or "").strip()
+    if cron_job_id:
+        remove_result = cron_remove(cron_job_id, session_key=str(state.get("cron_session_key") or "main"))
+    state["status"] = "stopped"
+    state["stopped_at"] = now_iso()
+    state["stop_reason"] = str(reason or "").strip() or "pm monitor-stop"
+    state["stop_result"] = remove_result
+    write_monitor_state(state)
+    return {"status": "stopped", "monitor": state, "remove_result": remove_result}
+
+
 @contextmanager
 def task_run_lock(task_id: str):
     normalized = re.sub(r"[^a-z0-9]+", "-", str(task_id or "").lower()).strip("-") or "unknown-task"
@@ -1589,6 +1675,8 @@ def build_cli_api() -> SimpleNamespace:
         coder_config=coder_config,
         create_task=create_task,
         create_task_comment=create_task_comment,
+        cron_add=cron_add,
+        cron_remove=cron_remove,
         current_head_commit_url=current_head_commit_url,
         default_config=default_config,
         default_doc_folder_name=default_doc_folder_name,
@@ -1612,7 +1700,9 @@ def build_cli_api() -> SimpleNamespace:
         list_task_attachments=list_task_attachments,
         load_config=load_config,
         load_json_file=load_json_file,
+        load_monitor_state=load_monitor_state,
         materialize_gsd_tasks=materialize_gsd_tasks,
+        monitor_config=monitor_config,
         next_task_id=next_task_id,
         normalize_task_titles=normalize_task_titles,
         normalize_task_key=normalize_task_key,
@@ -1647,6 +1737,8 @@ def build_cli_api() -> SimpleNamespace:
         run_openclaw_agent=run_openclaw_agent,
         route_gsd_work=route_gsd_work,
         scaffold_workspace=scaffold_workspace,
+        start_run_monitor=start_run_monitor,
+        stop_run_monitor=stop_run_monitor,
         sync_gsd_docs=sync_gsd_docs,
         sync_gsd_progress=sync_gsd_progress,
         spawn_acp_session=spawn_acp_session,
@@ -1660,6 +1752,7 @@ def build_cli_api() -> SimpleNamespace:
         task_run_lock=task_run_lock,
         tasklist_name=tasklist_name,
         upload_task_attachments=upload_task_attachments,
+        write_monitor_state=write_monitor_state,
         write_pm_bundle=write_pm_bundle,
         write_pm_run_record=write_pm_run_record,
     )

@@ -1,0 +1,95 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+
+def _int_or_default(value: Any, default: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(default)
+
+
+def _monitor_schedule(interval_minutes: int) -> dict[str, Any]:
+    minutes = max(int(interval_minutes or 0), 1)
+    return {"kind": "every", "everyMs": minutes * 60 * 1000}
+
+
+def should_start_monitor(*, backend: str, side_effects: dict[str, Any], monitor_cfg: dict[str, Any]) -> bool:
+    session_key = str((side_effects or {}).get("session_key") or "").strip()
+    return bool(monitor_cfg.get("enabled")) and str(backend or "").strip() == "acp" and bool(session_key)
+
+
+def build_monitor_state(
+    *,
+    repo_root: str | Path,
+    task_id: str,
+    task_guid: str,
+    run_id: str,
+    backend: str,
+    side_effects: dict[str, Any],
+    monitor_cfg: dict[str, Any],
+    now_iso: str,
+) -> dict[str, Any]:
+    root = Path(repo_root).expanduser().resolve()
+    normalized_run_id = str(run_id or "").strip()
+    monitors_dir = root / ".pm" / "monitors"
+    run_record_path = root / ".pm" / "runs" / f"{normalized_run_id}.json"
+    monitor_path = monitors_dir / f"{normalized_run_id}.json"
+    prompt_path = monitors_dir / f"{normalized_run_id}.prompt.txt"
+    return {
+        "status": "pending-cron",
+        "task_id": str(task_id or "").strip(),
+        "task_guid": str(task_guid or "").strip(),
+        "run_id": normalized_run_id,
+        "backend": str(backend or "").strip(),
+        "repo_root": str(root),
+        "pm_config_path": str(root / "pm.json"),
+        "child_session_key": str((side_effects or {}).get("session_key") or "").strip(),
+        "cron_session_key": "main",
+        "cron_job_id": "",
+        "cron_schedule": _monitor_schedule(int(monitor_cfg.get("interval_minutes") or 5)),
+        "prompt_path": str(prompt_path),
+        "run_record_path": str(run_record_path),
+        "monitor_path": str(monitor_path),
+        "started_at": str(now_iso or "").strip(),
+        "last_checked_at": "",
+        "last_notified_state": "",
+        "stopped_at": "",
+        "stop_reason": "",
+        "stop_result": None,
+    }
+
+
+def build_monitor_prompt(state: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "You are the PM monitor tick for one PM run.",
+            f"Repo root: {state['repo_root']}",
+            f"Config: {state['pm_config_path']}",
+            f"Run record: {state['run_record_path']}",
+            f"Monitor record: {state['monitor_path']}",
+            f"Cron job id: {state['cron_job_id']}",
+            "Read the config, run record, and monitor record before deciding.",
+            "If the run is finalized/completed, remove the cron job and mark the monitor closed.",
+            "If review is failed, emit one rerun reminder.",
+            "If review is passed but task is not completed, emit one complete reminder.",
+            "If nothing changed, reply with NO_REPLY.",
+        ]
+    )
+
+
+def build_monitor_job(state: dict[str, Any], *, monitor_cfg: dict[str, Any]) -> dict[str, Any]:
+    timeout_seconds = max(_int_or_default(monitor_cfg.get("stalled_after_minutes"), 20), 5) * 60
+    return {
+        "name": f"pm-monitor-{state['run_id']}",
+        "schedule": dict(state["cron_schedule"]),
+        "payload": {
+            "kind": "agentTurn",
+            "message": build_monitor_prompt(state),
+            "timeoutSeconds": timeout_seconds,
+        },
+        "sessionTarget": "isolated",
+        "delivery": {"mode": "announce", "bestEffort": True},
+    }

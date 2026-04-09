@@ -123,6 +123,15 @@ def default_config() -> dict[str, Any]:
             "sync_comment": True,
             "sync_state": True,
         },
+        "monitor": {
+            "enabled": True,
+            "mode": "cron",
+            "interval_minutes": 5,
+            "stalled_after_minutes": 20,
+            "notify_on_review_pending": True,
+            "notify_on_review_failed": True,
+            "auto_stop_on_complete": True,
+        },
         "tasklist_name": "选育溯源档案",
         "task_prefix": "T",
         "kind": "task",
@@ -286,6 +295,16 @@ def coder_config() -> dict[str, Any]:
 def review_config() -> dict[str, Any]:
     defaults = default_config()["review"]
     raw = ACTIVE_CONFIG.get("review")
+    if not isinstance(raw, dict):
+        return dict(defaults)
+    merged = dict(defaults)
+    merged.update(raw)
+    return merged
+
+
+def monitor_config() -> dict[str, Any]:
+    defaults = default_config()["monitor"]
+    raw = ACTIVE_CONFIG.get("monitor")
     if not isinstance(raw, dict):
         return dict(defaults)
     merged = dict(defaults)

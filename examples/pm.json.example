@@ -32,5 +32,14 @@
     "enforce_on_complete": true,
     "sync_comment": true,
     "sync_state": true
+  },
+  "monitor": {
+    "enabled": true,
+    "mode": "cron",
+    "interval_minutes": 5,
+    "stalled_after_minutes": 20,
+    "notify_on_review_pending": true,
+    "notify_on_review_failed": true,
+    "auto_stop_on_complete": true
   }
 }

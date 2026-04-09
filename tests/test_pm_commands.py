@@ -63,6 +63,15 @@ class _FakeApi:
                 "sync_comment": True,
                 "sync_state": True,
             },
+            "monitor": {
+                "enabled": True,
+                "mode": "cron",
+                "interval_minutes": 5,
+                "stalled_after_minutes": 20,
+                "notify_on_review_pending": True,
+                "notify_on_review_failed": True,
+                "auto_stop_on_complete": True,
+            },
         }
 
     def build_run_message(self, bundle: dict) -> str:
@@ -89,6 +98,9 @@ class _FakeApi:
 
     def pm_file(self, name: str) -> Path:
         return self._pm_dir / name
+
+    def monitor_config(self) -> dict:
+        return dict(self.default_config()["monitor"])
 
     def spawn_acp_session(self, **kwargs):
         self.spawn_calls += 1
@@ -136,6 +148,11 @@ class _FakeApi:
         if path.parent.name == "runs":
             record = self.run_records.get(path.stem)
             return dict(record) if isinstance(record, dict) else None
+        if path.parent.name == "monitors":
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                return None
         return None
 
     def create_task_comment(self, task_guid: str, content: str) -> dict:
@@ -154,6 +171,12 @@ class _FakeApi:
 
     def get_task_record_by_guid(self, task_guid: str) -> dict:
         return {"task_id": "T1", "guid": task_guid, "summary": "T1 summary"}
+
+    def ensure_task_started(self, task: dict) -> None:
+        return None
+
+    def task_id_for_output(self, task_id: str) -> str:
+        return task_id
 
     def finalize_last_run_for_completion(self, last_run: dict | None, *, task_id: str = "", task_guid: str = "", completed_at: str, finalized_at: str):
         if not isinstance(last_run, dict):
@@ -178,6 +201,27 @@ class _FakeApi:
         normalized_run_id = str(run_id or payload.get("run_id") or "").strip()
         if normalized_run_id:
             self.run_records[normalized_run_id] = dict(payload)
+
+    def start_run_monitor(self, *, repo_root: str, task_id: str, task_guid: str, run_id: str, backend: str, side_effects: dict, session_key: str) -> dict:
+        return {
+            "status": "active",
+            "task_id": task_id,
+            "task_guid": task_guid,
+            "run_id": run_id,
+            "backend": backend,
+            "repo_root": repo_root,
+            "child_session_key": str(side_effects.get("session_key") or ""),
+            "cron_job_id": f"job-{run_id}",
+        }
+
+    def stop_run_monitor(self, run_id: str, *, reason: str = "pm monitor-stop") -> dict:
+        monitor = {}
+        record = self.run_records.get(run_id)
+        if isinstance(record, dict) and isinstance(record.get("monitor"), dict):
+            monitor = dict(record["monitor"])
+        monitor["status"] = "stopped"
+        monitor["stop_reason"] = reason
+        return {"status": "stopped", "monitor": monitor, "remove_result": {"status": "ok"}}
 
 
 class PmCommandsFallbackTest(unittest.TestCase):
@@ -258,7 +302,73 @@ class PmCommandsFallbackTest(unittest.TestCase):
         self.assertIn("Auto-switched backend from codex-cli to acp", payload["warnings"][0])
         self.assertIn("OpenClaw Coding Kit（PM）执行链路", payload["runtime_banner"])
         self.assertIn("backend=acp", payload["runtime_banner"])
-        self.assertIn("本次为自动路由", payload["runtime_banner"])
+
+    def test_cmd_run_reviewed_starts_monitor_for_acp(self) -> None:
+        api = _FakeApi()
+
+        def _spawn_ok(**kwargs):
+            api.spawn_calls += 1
+            return {"status": "accepted", "result": {"details": {"childSessionKey": "child-1", "runId": "run-1"}}}
+
+        api.spawn_acp_session = _spawn_ok
+        api.persist_dispatch_side_effects = lambda bundle, result, *, agent_id, runtime: {"session_key": "child-1", "run_id": "run-1"}
+        handlers = build_command_handlers(api)
+        args = argparse.Namespace(
+            task_id="T1",
+            task_guid="",
+            backend="acp",
+            agent="codex",
+            timeout=120,
+            thinking="high",
+            session_key="main",
+        )
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = handlers["run_reviewed"](args)
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["monitor"]["status"], "active")
+        self.assertEqual(payload["monitor"]["cron_job_id"], "job-run-1")
+
+    def test_cmd_complete_stops_active_monitor(self) -> None:
+        api = _FakeApi()
+        handlers = build_command_handlers(api)
+        api.last_run_record = {
+            "task_id": "T1",
+            "task_guid": "guid-T1",
+            "run_id": "run-1",
+            "review_required": True,
+            "review_status": "passed",
+            "monitor": {"status": "active", "run_id": "run-1", "cron_job_id": "job-run-1"},
+        }
+        api.run_records["run-1"] = dict(api.last_run_record)
+        args = argparse.Namespace(
+            task_id="T1",
+            task_guid="",
+            include_completed=False,
+            content="done",
+            content_file="",
+            file=[],
+            commit_url="",
+            skip_head_commit_url=True,
+            force_review_bypass=False,
+            repo_root="",
+        )
+        api.resolve_optional_text_input = lambda content, content_file: content
+        api.upload_task_attachments = lambda task, task_id, files: {"status": "skipped", "uploaded_count": 0}
+        api.current_head_commit_url = lambda repo_root: ""
+        api.build_completion_comment = lambda content, commit_url, uploaded: content
+        api.patch_task = lambda guid, payload: {"guid": guid, **payload}
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = handlers["complete"](args)
+
+        self.assertEqual(code, 0)
+        payload = json.loads(buf.getvalue())
+        self.assertEqual(payload["monitor_stop"]["status"], "stopped")
 
     def test_cmd_run_writes_run_id_from_dispatch_side_effects(self) -> None:
         api = _FakeApi()

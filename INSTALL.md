@@ -200,6 +200,33 @@ python3 skills/pm/scripts/pm.py run --backend acp --agent codex --timeout 120
 - 如果显式使用 `backend=acp`，默认 `coder.acp_cleanup = "delete"`，run-mode 子会话在任务完成后按机制自动回收；只有需要保留现场排障时才改成 `"keep"`
 - 默认收口链路改为 `pm run-reviewed` -> `pm review --verdict pass|fail` -> 失败时 `pm rerun` -> `pm complete`
 - `pm complete` 会拒绝最近一次 run 仍为 `pending` / `failed` 的任务；特殊情况必须显式传 `--force-review-bypass`，并且 bypass 会写入 `.pm/last-run.json`
+- monitor loop 仅在异步 ACP run 上启用；它依赖 bridge 侧暴露 `cron.add` 和 `cron.remove`，并通过 isolated `agentTurn` cron job 读取绝对 `.pm` 路径做巡检
+- monitor 状态固定写入 `.pm/monitors/<run_id>.json`，并镜像到 `.pm/last-run.json` / `.pm/runs/<run_id>.json`
+
+Monitor operator flow:
+
+```bash
+python3 skills/pm/scripts/pm.py run-reviewed --task-id T1 --backend acp --agent codex
+python3 skills/pm/scripts/pm.py monitor-status --task-id T1
+python3 skills/pm/scripts/pm.py review --task-id T1 --verdict fail --feedback "Add evidence" --reviewer qa
+python3 skills/pm/scripts/pm.py rerun --task-id T1 --backend acp --agent codex
+python3 skills/pm/scripts/pm.py review --task-id T1 --verdict pass --reviewer qa
+python3 skills/pm/scripts/pm.py complete --task-id T1 --content "done"
+```
+
+预期行为：
+
+- `run-reviewed` 成功后生成 monitor JSON，并向 bridge 请求一条 cron
+- `rerun` 会先关闭上一轮 monitor，再给新 run 建立新 monitor
+- `complete` 会返回 `monitor_stop.status == "stopped"`，同时把最终 monitor 状态写回 `.pm/last-run.json`
+
+如果当前没有 Feishu/真实 bridge，可以先用本地 fake bridge 做 smoke：
+
+```bash
+OPENCLAW_LARK_BRIDGE_SCRIPT=/abs/path/to/fake-bridge.py python3 skills/pm/scripts/pm.py run-reviewed --task-id T1 --backend acp --agent codex
+OPENCLAW_LARK_BRIDGE_SCRIPT=/abs/path/to/fake-bridge.py python3 skills/pm/scripts/pm.py monitor-status --task-id T1
+OPENCLAW_LARK_BRIDGE_SCRIPT=/abs/path/to/fake-bridge.py python3 skills/pm/scripts/pm.py complete --task-id T1 --content "local monitor smoke"
+```
 
 #### Feishu 插件
 
