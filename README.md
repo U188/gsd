@@ -73,8 +73,8 @@ flowchart LR
 
 Editable diagram sources:
 
-- [`diagrams/openclaw-coding-kit-architecture.svg`](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/diagrams/openclaw-coding-kit-architecture.svg)
-- [`diagrams/openclaw-coding-kit-architecture.drawio`](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/diagrams/openclaw-coding-kit-architecture.drawio)
+- [`diagrams/openclaw-coding-kit-architecture.svg`](./diagrams/openclaw-coding-kit-architecture.svg)
+- [`diagrams/openclaw-coding-kit-architecture.drawio`](./diagrams/openclaw-coding-kit-architecture.drawio)
 
 ## Operating Modes
 
@@ -162,11 +162,11 @@ Behavior summary:
 
 ## Quick Start
 
-If you want the fastest meaningful validation path, do not start with Feishu. Run:
+If you want the fastest meaningful validation path, do not start with Feishu. These commands are intended to work from any clone or copied directory, not just the author's machine. The first command writes a repo-local `pm.json` so the following steps keep using `local/repo` backend. Run:
 
 ```bash
 python3 -m py_compile skills/pm/scripts/*.py skills/coder/scripts/*.py
-python3 skills/pm/scripts/pm.py init --project-name demo --task-backend local --doc-backend repo --dry-run
+python3 skills/pm/scripts/pm.py init --project-name demo --task-backend local --doc-backend repo --write-config --skip-auto-run --skip-bootstrap-task --no-auth-bundle
 python3 skills/pm/scripts/pm.py context --refresh
 python3 skills/pm/scripts/pm.py route-gsd --repo-root .
 ```
@@ -181,7 +181,7 @@ Once that passes, move to:
 
 Full operator flow:
 
-- [`INSTALL.md`](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/INSTALL.md)
+- [`INSTALL.md`](./INSTALL.md)
 
 ## Installation Strategy
 
@@ -239,7 +239,7 @@ That last point matters. Duplicate Feishu tool registration can cause tool confl
 
 Detailed install and permission guidance:
 
-- [`INSTALL.md`](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/INSTALL.md)
+- [`INSTALL.md`](./INSTALL.md)
 
 ## Compatibility
 
@@ -252,9 +252,9 @@ Detailed install and permission guidance:
 
 ## Included References
 
-- [`INSTALL.md`](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/INSTALL.md)
-- [`examples/pm.json.example`](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/examples/pm.json.example)
-- [`examples/openclaw.json5.snippets.md`](/Volumes/DATABASE/code/learn/openclaw-pm-coder-kit/examples/openclaw.json5.snippets.md)
+- [`INSTALL.md`](./INSTALL.md)
+- [`examples/pm.json.example`](./examples/pm.json.example)
+- [`examples/openclaw.json5.snippets.md`](./examples/openclaw.json5.snippets.md)
 
 ## Security
 

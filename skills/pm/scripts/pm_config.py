@@ -193,9 +193,29 @@ def project_name() -> str:
     return str(ACTIVE_CONFIG.get("project_name") or "").strip() or "未命名项目"
 
 
+def _config_base_dir() -> Path:
+    raw = str(ACTIVE_CONFIG.get("_config_path") or "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve().parent
+    return Path.cwd().expanduser().resolve()
+
+
+def _resolve_path(raw: str, *, base_dir: Path | None = None) -> Path:
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve()
+    anchor = (base_dir or Path.cwd()).expanduser().resolve()
+    return (anchor / path).resolve()
+
+
 def project_root_path(explicit: str = "") -> Path:
-    raw = str(explicit or ACTIVE_CONFIG.get("repo_root") or default_config()["repo_root"]).strip()
-    return Path(raw).expanduser().resolve()
+    explicit_raw = str(explicit or "").strip()
+    if explicit_raw:
+        return _resolve_path(explicit_raw)
+    raw = str(ACTIVE_CONFIG.get("repo_root") or "").strip()
+    if raw:
+        return _resolve_path(raw, base_dir=_config_base_dir())
+    return Path(default_config()["repo_root"]).expanduser().resolve()
 
 
 def pm_dir_path(explicit_repo_root: str = "") -> Path:

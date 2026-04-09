@@ -63,6 +63,15 @@
 - `openclaw` 默认基线固定为 `2026.3.22`，不要默认升级到 `2026.4.5+`。
 - 如果目标包含 Feishu，用户侧创建 app / bot / 群 / 权限申请要和机器侧安装并行进行。
 
+### 1.1 仓库可复制约束
+
+这套仓库按“复制出去还能直接用”来维护，安装文档和配置示例也按这个标准写：
+
+- 版本库里的文档链接必须是仓库内相对路径，不能写作者机器上的绝对路径
+- 如果你在仓库根目录放 `pm.json`，`repo_root` 建议写成 `"."`，这样复制到新目录后不用先改路径
+- 允许外置的只有敏感信息和真实环境参数，例如 token、secret、真实群组 id、真实 workspace 路径
+- 真正的验收不是“原目录能跑”，而是“复制到新目录后，按 Step 1 还能跑通”
+
 推荐把安装任务拆成三档：
 
 | 档位 | 目标 | 是否需要 Feishu |
@@ -122,7 +131,7 @@ openclaw -v
 
 - 不能只看“机器上有更高版本 Python”；真正执行 `pm.py` 的 `python3` 必须满足 `>= 3.9`
 - 如果机器上同时有 3.8 和 3.12，建议把登录环境里的默认 `python3` 前置到 3.12
-- 这次远端验证机实际用的是 `~/.local/bin/python3 -> /usr/local/bin/python3.12`
+- 可用 Python 解释器示例：`~/.local/bin/python3 -> /usr/local/bin/python3.12`
 - 如果 `cc` 不存在，不阻塞本仓库安装，但交付里要明确写出“仅验证了 Codex 路径”
 
 ### 2.2 缺失时优先补什么
@@ -180,7 +189,7 @@ Gateway 如果要经 HTTP `/tools/invoke` 调 `sessions_spawn`，还要放开默
 
 ```bash
 codex login status
-/usr/local/node/bin/acpx codex sessions new
+acpx codex sessions new
 python3 skills/pm/scripts/pm.py run-reviewed --task-id T1 --backend codex-cli --agent codex --timeout 120
 python3 skills/pm/scripts/pm.py review --task-id T1 --verdict pass --reviewer qa
 python3 skills/pm/scripts/pm.py complete --task-id T1 --content "validated"
@@ -293,10 +302,10 @@ export OPENCLAW_CONFIG=/abs/path/to/real/openclaw.json
 
 不要依赖 repo 根目录里的占位 `openclaw.json` 自动猜。
 
-这次远端验证机实际使用的是：
+例如：
 
 ```bash
-export OPENCLAW_CONFIG=/home/openclaw/.openclaw-coding-kit/openclaw.json
+export OPENCLAW_CONFIG=/abs/path/to/openclaw.json
 ```
 
 路径建议：
@@ -375,10 +384,12 @@ python3 skills/pm/scripts/pm.py route-gsd --repo-root .
 如果你只是要证明仓库本地可用，这一组命令已经够用：
 
 ```bash
-python3 skills/pm/scripts/pm.py init --project-name demo --task-backend local --doc-backend repo --dry-run
+python3 skills/pm/scripts/pm.py init --project-name demo --task-backend local --doc-backend repo --write-config --skip-auto-run --skip-bootstrap-task --no-auth-bundle
 python3 skills/pm/scripts/pm.py context --refresh
 python3 skills/pm/scripts/pm.py route-gsd --repo-root .
 ```
+
+这里用 `--write-config`，不是为了偷懒，而是为了把 `local/repo` 这组最小配置真正落到当前副本里；否则前一条只做 `--dry-run`，后面的 `context --refresh` 仍会回到默认 backend。
 
 如果你要再证明本地 task/doc 写入链路也可用，可以补：
 
@@ -511,10 +522,13 @@ openclaw plugins list
 
 ```json
 {
+  "repo_root": ".",
   "task": { "backend": "local" },
   "doc": { "backend": "repo" }
 }
 ```
+
+这里把 `repo_root` 写成 `"."`，就是为了让同一份配置跟着仓库一起移动；只要 `pm.json` 在仓库根目录，复制到新目录后仍能直接使用。
 
 如果要接 Feishu，再补：
 
@@ -756,9 +770,11 @@ python3 skills/pm/scripts/pm.py permission-bundle \
 
 1. `py_compile`
 2. `pm.py --help`
-3. `init --dry-run`
+3. `init --write-config --skip-auto-run --skip-bootstrap-task --no-auth-bundle`
 4. `context --refresh`
 5. `route-gsd --repo-root .`
+
+如果还想额外证明 CLI 形状没问题，再补一条 `init --dry-run` 即可；但真正的 repo-local 主线验收，要以前面这组“已落配置”的命令为准。
 
 ### 6.2 OpenClaw 接入验收
 

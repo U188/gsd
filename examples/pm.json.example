@@ -1,5 +1,5 @@
 {
-  "repo_root": "REPLACE_WITH_ABSOLUTE_REPO_PATH",
+  "repo_root": ".",
   "project": {
     "name": "示例项目",
     "agent": "your-agent-id"
@@ -12,7 +12,7 @@
   },
   "doc": {
     "backend": "repo",
-    "folder_name": "示例项目",
+    "folder_name": ".planning",
     "project_title": "PROJECT",
     "requirements_title": "REQUIREMENTS",
     "roadmap_title": "ROADMAP",
