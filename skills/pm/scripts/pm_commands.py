@@ -46,6 +46,16 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
             return bool(getter())
         return bool(review_cfg().get("sync_state"))
 
+    def require_explicit_task_binding(*, command_name: str, task_id: str = "", task_guid: str = "") -> tuple[str, str]:
+        normalized_task_id = str(task_id or "").strip()
+        normalized_task_guid = str(task_guid or "").strip()
+        if normalized_task_id or normalized_task_guid:
+            return normalized_task_id, normalized_task_guid
+        raise SystemExit(
+            f"{command_name} requires explicit --task-id or --task-guid. "
+            "Use `pm start-work --summary ...` (or `pm create` first) to bind tracked work before dispatch."
+        )
+
     def monitor_cfg() -> dict[str, Any]:
         getter = getattr(api, "monitor_config", None)
         if callable(getter):
@@ -246,6 +256,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
     def execute_run(
         args: argparse.Namespace,
         *,
+        command_name: str = "pm run",
         review_required: bool = False,
         review_status: str = "",
         attempt: int | None = None,
@@ -257,7 +268,14 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         review_history_items: list[dict[str, Any]] | None = None,
         bundle_mutator: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        bundle, path = api.build_coder_context(task_id=args.task_id, task_guid=args.task_guid)
+        normalized_task_id, normalized_task_guid = require_explicit_task_binding(
+            command_name=command_name,
+            task_id=getattr(args, "task_id", ""),
+            task_guid=getattr(args, "task_guid", ""),
+        )
+        args.task_id = normalized_task_id
+        args.task_guid = normalized_task_guid
+        bundle, path = api.build_coder_context(task_id=normalized_task_id, task_guid=normalized_task_guid)
         bundle = dict(bundle)
         if callable(bundle_mutator):
             bundle_mutator(bundle)
@@ -973,12 +991,13 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         return emit({"bundle_path": str(path), "bundle": payload})
 
     def cmd_run(args: argparse.Namespace) -> int:
-        payload = execute_run(args)
+        payload = execute_run(args, command_name="pm run")
         return emit(payload)
 
     def cmd_run_reviewed(args: argparse.Namespace) -> int:
         payload = execute_run(
             args,
+            command_name="pm run-reviewed",
             review_required=review_required_default(),
             review_status="pending",
             attempt=1,
@@ -1035,6 +1054,114 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
                 "tasklist": tasklist,
                 "deduplicated": False,
                 "context_path": str(api.pm_file("current-context.json")),
+                "next_task": context.get("next_task"),
+            }
+        )
+
+    def cmd_start_work(args: argparse.Namespace) -> int:
+        tasklist = None
+        created = False
+        deduplicated = False
+        if args.task_guid:
+            task = api.get_task_record_by_guid(args.task_guid)
+        elif args.task_id:
+            task = api.get_task_record(args.task_id, include_completed=getattr(args, "include_completed", False))
+        else:
+            summary = str(args.summary or "").strip()
+            if not summary:
+                raise SystemExit("pm start-work requires --summary when --task-id/--task-guid is not provided")
+            tasklist_name = str(args.tasklist_name or "").strip()
+            if tasklist_name:
+                api.ACTIVE_CONFIG.setdefault("task", {})
+                if isinstance(api.ACTIVE_CONFIG.get("task"), dict):
+                    api.ACTIVE_CONFIG["task"]["tasklist_name"] = tasklist_name
+                api.ACTIVE_CONFIG["tasklist_name"] = tasklist_name
+            tasklist = api.ensure_tasklist(tasklist_name)
+            task = None
+            if not args.force_new:
+                existing = api.find_existing_task_by_summary(summary, include_completed=True)
+                if isinstance(existing, dict) and str(existing.get("guid") or "").strip():
+                    task = existing
+                    deduplicated = True
+            if not isinstance(task, dict):
+                task_id = api.next_task_id()
+                title = f"[{task_id}] {summary}"
+                description = api.build_description(task_id, summary, args.request or "", args.repo_root, args.kind)
+                owner = tasklist.get("owner") if isinstance(tasklist, dict) and isinstance(tasklist.get("owner"), dict) else {}
+                current_user_id = str(owner.get("id") or "").strip()
+                task = api.create_task(
+                    summary=title,
+                    description=description,
+                    tasklists=[{"tasklist_guid": str((tasklist or {}).get("guid") or "").strip()}],
+                    current_user_id=current_user_id,
+                )
+                created = True
+        if not isinstance(task, dict):
+            raise SystemExit("pm start-work failed to resolve task binding")
+        parsed = api.parse_task_summary(task_summary_text(task)) or {}
+        task_id = str(task.get("task_id") or parsed.get("task_id") or args.task_id or "").strip()
+        task_guid = str(task.get("guid") or args.task_guid or "").strip()
+        if not task_guid:
+            raise SystemExit("pm start-work resolved a task without guid")
+        context = api.refresh_context_cache(task_guid=task_guid)
+        kickoff_comment = None
+        if not getattr(args, "no_comment", False):
+            auto_started = api.ensure_task_started(task)
+            mode = "run-reviewed" if bool(getattr(args, "reviewed", False)) else "run"
+            backend_name = str(args.backend or api.coder_config().get("backend") or "").strip() or "default"
+            agent_name = str(args.agent or api.coder_config().get("agent_id") or "").strip() or "default"
+            kickoff_body = str(getattr(args, "comment", "") or "").strip() or "\n".join(
+                [
+                    "开工。",
+                    "阶段：intake",
+                    f"任务：{task_id or task_guid}",
+                    f"执行方式：pm {mode}",
+                    f"执行体：backend={backend_name} agent={agent_name}",
+                    f"状态：{'ready' if bool(getattr(args, 'no_run', False)) else 'dispatching'}",
+                    "机制：显式 task 绑定已建立。",
+                ]
+            )
+            kickoff_comment = api.create_task_comment(task_guid, kickoff_body)
+            if isinstance(auto_started, dict):
+                kickoff_comment = dict(kickoff_comment)
+                kickoff_comment["start_result"] = auto_started
+            task = api.get_task_record_by_guid(task_guid)
+            context = api.refresh_context_cache(task_guid=task_guid)
+        dispatch = None
+        if not getattr(args, "no_run", False):
+            run_args = argparse.Namespace(
+                task_id=task_id,
+                task_guid=task_guid,
+                backend=str(args.backend or ""),
+                agent=str(args.agent or ""),
+                timeout=int(args.timeout or 0),
+                thinking=str(args.thinking or ""),
+                session_key=str(args.session_key or ""),
+            )
+            if bool(getattr(args, "reviewed", False)):
+                dispatch = execute_run(
+                    run_args,
+                    command_name="pm start-work",
+                    review_required=review_required_default(),
+                    review_status="pending",
+                    attempt=1,
+                    review_round=1,
+                )
+            else:
+                dispatch = execute_run(run_args, command_name="pm start-work")
+            context = api.refresh_context_cache(task_guid=task_guid)
+        return emit(
+            {
+                "task_id": task_id,
+                "task_guid": task_guid,
+                "task": task,
+                "tasklist": tasklist,
+                "created": created,
+                "deduplicated": deduplicated,
+                "kickoff_comment": kickoff_comment,
+                "dispatch": dispatch,
+                "context_path": str(api.pm_file("current-context.json")),
+                "current_task": context.get("current_task"),
                 "next_task": context.get("next_task"),
             }
         )
@@ -1168,6 +1295,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
 
         payload = execute_run(
             rerun_args,
+            command_name="pm rerun",
             review_required=bool(prior_run.get("review_required", True)),
             review_status="pending",
             attempt=int(prior_run.get("attempt") or 1) + 1,
@@ -1448,6 +1576,7 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         "monitor_status": cmd_monitor_status,
         "monitor_stop": cmd_monitor_stop,
         "create": cmd_create,
+        "start_work": cmd_start_work,
         "get": cmd_get,
         "comment": cmd_comment,
         "complete": cmd_complete,

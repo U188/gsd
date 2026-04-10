@@ -174,6 +174,20 @@ python3 skills/pm/scripts/pm.py coder-context --task-id T123
 Preferred managed execution path:
 
 ```bash
+python3 skills/pm/scripts/pm.py start-work --summary "<summary>" --request "<request>" --reviewed
+```
+
+When the task already exists:
+
+```bash
+python3 skills/pm/scripts/pm.py start-work --task-id T123 --reviewed
+```
+
+`start-work` is the preferred intake + kickoff + optional dispatch path for tracked work. It binds the task first, writes a kickoff comment, then dispatches execution.
+
+Direct dispatch is still available, but now requires explicit task binding:
+
+```bash
 python3 skills/pm/scripts/pm.py run --task-id T123
 ```
 
@@ -204,6 +218,8 @@ python3 skills/pm/scripts/pm.py complete --task-id T123 --content "<result summa
 - For managed project work, do not skip PM and jump straight to coding.
 - Prefer `pm context --refresh` before making task-routing decisions.
 - If the user request clearly maps to tracked work, either bind to an existing task or create one first.
+- No explicit task binding, no managed dispatch: `pm run` / `pm run-reviewed` now require `--task-id` or `--task-guid`.
+- Prefer `pm start-work` when you want one command to handle intake, kickoff comment, and dispatch.
 - Treat task state as the execution source of truth.
 - Treat PROJECT / ROADMAP / STATE as long-form narrative truth.
 - When execution happens outside `pm run`, still write the result back via `pm comment`, `pm update-description`, or `pm complete`.

@@ -98,6 +98,52 @@ class PmLocalCliTest(unittest.TestCase):
     def _bridge_log(self, root: Path) -> dict:
         return json.loads((root / ".pm" / "fake-bridge-log.json").read_text(encoding="utf-8"))
 
+    def test_run_requires_explicit_task_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            proc = self._run_pm(root, config_path, env, "run", "--backend", "codex-cli", "--agent", "codex", check=False)
+
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("requires explicit --task-id or --task-guid", proc.stderr)
+            self.assertIn("pm start-work", proc.stderr)
+
+    def test_start_work_creates_bound_task_kickoff_comment_and_dispatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            proc = self._run_pm(
+                root,
+                config_path,
+                env,
+                "start-work",
+                "--summary",
+                "Land PM-first gate",
+                "--request",
+                "Need a tracked intake + dispatch command",
+                "--reviewed",
+                "--backend",
+                "codex-cli",
+                "--agent",
+                "codex",
+            )
+            payload = json.loads(proc.stdout)
+
+            self.assertEqual(payload["task_id"], "T1")
+            self.assertTrue(payload["created"])
+            self.assertEqual(payload["dispatch"]["task_id"], "T1")
+            self.assertEqual(payload["dispatch"]["review_status"], "pending")
+            self.assertIn("显式 task 绑定已建立", payload["kickoff_comment"]["content"])
+            self.assertEqual(payload["current_task"]["task_id"], "T1")
+
+            task_detail = json.loads(
+                self._run_pm(root, config_path, env, "get", "--task-id", "T1").stdout
+            )
+            comments = task_detail.get("comments") or []
+            self.assertTrue(any("显式 task 绑定已建立" in str(item.get("content") or "") for item in comments))
+
     def test_local_backend_supports_attachment_and_complete_flow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
