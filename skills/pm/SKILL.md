@@ -187,6 +187,13 @@ python3 skills/pm/scripts/pm.py start-work --task-id T123 --reviewed
 
 Current review boundary: `pm run-reviewed` creates a run that must later pass a manual review gate via `pm review` before `pm complete`. PM does not run an automatic review chain on its own.
 
+Evidence gate (hard rule):
+
+- `pm review` pass verdicts must cite concrete, grounded evidence already present in the run record or task/doc collaboration surface.
+- `pm complete` must not report success when the latest review lacks `verification_status=verified`.
+- If evidence is missing, the correct outcome is `证据不足/未验证`, not a guessed pass.
+- Managed execution should remain observable while dispatch is in progress: if the backend has accepted the run but not returned yet, a placeholder run record / monitor status should already exist.
+
 Direct dispatch is still available, but now requires explicit task binding:
 
 ```bash
