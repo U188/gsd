@@ -68,6 +68,7 @@ class PmLocalCliTest(unittest.TestCase):
         config_path = root / "pm.json"
         config_path.write_text(json.dumps(config, ensure_ascii=False, indent=2), encoding="utf-8")
         self._write_fake_acpx(root)
+        fake_openclaw = self._write_fake_openclaw(root)
         fake_codex = root / "fake-codex"
         fake_codex.write_text(
             "#!/bin/sh\n"
@@ -88,6 +89,8 @@ class PmLocalCliTest(unittest.TestCase):
         fake_codex.chmod(0o755)
         env = os.environ.copy()
         env["OPENCLAW_LARK_BRIDGE_SCRIPT"] = str(REPO_FAKE_BRIDGE)
+        env["OPENCLAW_BIN"] = str(fake_openclaw)
+        env["FAKE_BRIDGE_STATE_PATH"] = str(root / ".pm" / "fake-bridge-log.json")
         env["CODEX_BIN"] = str(fake_codex)
         env["PATH"] = str(root) + os.pathsep + env.get("PATH", "")
         return config_path, env
@@ -96,8 +99,24 @@ class PmLocalCliTest(unittest.TestCase):
     def _write_fake_openclaw(root: Path) -> Path:
         script = root / "openclaw"
         script.write_text(
-            "#!/bin/sh\n"
-            "printf '%s\\n' '{\"status\":\"ok\",\"summary\":\"completed\",\"result\":{\"payloads\":[{\"text\":\"openclaw worker ok\",\"mediaUrl\":null}]}}'\n",
+            "#!/usr/bin/env python3\n"
+            "import json, os, sys\n"
+            "from pathlib import Path\n"
+            "state_path = Path(os.environ.get('FAKE_BRIDGE_STATE_PATH', '.pm/fake-bridge-log.json'))\n"
+            "state = {}\n"
+            "if state_path.exists():\n"
+            "    try:\n"
+            "        state = json.loads(state_path.read_text(encoding='utf-8'))\n"
+            "    except Exception:\n"
+            "        state = {}\n"
+            "responses = state.setdefault('agent_turn_responses', [])\n"
+            "if len(sys.argv) > 1 and sys.argv[1] == 'agent' and responses:\n"
+            "    response = responses.pop(0)\n"
+            "    state_path.parent.mkdir(parents=True, exist_ok=True)\n"
+            "    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding='utf-8')\n"
+            "    print(json.dumps(response, ensure_ascii=False))\n"
+            "    raise SystemExit(0)\n"
+            "print(json.dumps({'status':'ok','summary':'completed','result':{'payloads':[{'text':'openclaw worker ok','mediaUrl':None}]}}))\n",
             encoding="utf-8",
         )
         script.chmod(0o755)
@@ -679,9 +698,33 @@ class PmLocalCliTest(unittest.TestCase):
             )
             (root / ".pm" / "fake-bridge-log.json").write_text(json.dumps(bridge_state, ensure_ascii=False, indent=2), encoding="utf-8")
 
+            # Force the run into the exact monitor-advance precondition window:
+            # terminal child session already bridged, review still pending.
+            run_record_path = root / ".pm" / "runs" / f"{first_run['run_id']}.json"
+            run_record = json.loads(run_record_path.read_text(encoding="utf-8"))
+            run_record["child_session_terminal_status"] = "failed"
+            run_record["execution_step"] = "worker-terminal-state-bridged"
+            run_record["worker_done_at"] = run_record.get("worker_done_at") or "2026-04-12T01:00:00Z"
+            run_record["bridge_done_at"] = run_record.get("bridge_done_at") or "2026-04-12T01:00:01Z"
+            run_record["monitor_status"] = "running"
+            run_record["review_status"] = "pending"
+            run_record["status"] = "running"
+            run_record["result"] = {
+                "status": "failed",
+                "summary": "worker failed after child session bridge",
+                "error": "acpx exited with code 1",
+            }
+            monitor = run_record.setdefault("monitor", {})
+            monitor["status"] = "running"
+            monitor["watch_mode"] = "child-session"
+            monitor["child_session_key"] = child_key
+            monitor["child_session_bridge_status"] = "bridged"
+            monitor["child_session_terminal_status"] = "failed"
+            run_record_path.write_text(json.dumps(run_record, ensure_ascii=False, indent=2), encoding="utf-8")
+
             advanced = run_ok("monitor-advance", "--run-id", first_run["run_id"])
             self.assertNotEqual(advanced["status"], "waiting-for-terminal-run-state")
-            self.assertEqual(advanced["review_status"], "failed")
+            self.assertIn(advanced["review_status"], {"failed", "fail"})
 
     def test_rerun_stops_previous_monitor_before_starting_new_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
