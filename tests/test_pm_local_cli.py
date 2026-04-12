@@ -146,6 +146,55 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertIn("requires explicit --task-id or --task-guid", proc.stderr)
             self.assertIn("pm start-work", proc.stderr)
 
+    def test_run_blocks_guarded_managed_work_and_points_to_run_reviewed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            self._run_pm(root, config_path, env, "create", "--summary", "UI build verification code task")
+            proc = self._run_pm(
+                root,
+                config_path,
+                env,
+                "run",
+                "--task-id",
+                "T1",
+                "--backend",
+                "codex-cli",
+                "--agent",
+                "codex",
+                check=False,
+            )
+
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("pm run blocked: reviewed gate required", proc.stderr)
+            self.assertIn("pm run-reviewed", proc.stderr)
+
+    def test_start_work_blocks_guarded_managed_work_without_reviewed_flag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            proc = self._run_pm(
+                root,
+                config_path,
+                env,
+                "start-work",
+                "--summary",
+                "Land PM-first gate",
+                "--request",
+                "Need tracked code changes across multiple files and test coverage",
+                "--backend",
+                "codex-cli",
+                "--agent",
+                "codex",
+                check=False,
+            )
+
+            self.assertNotEqual(proc.returncode, 0)
+            self.assertIn("pm start-work blocked: reviewed gate required", proc.stderr)
+            self.assertIn("pm start-work --reviewed", proc.stderr)
+
     def test_start_work_creates_bound_task_kickoff_comment_and_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

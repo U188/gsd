@@ -38,6 +38,71 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
     def review_required_default() -> bool:
         return bool(review_cfg().get("required"))
 
+    REVIEW_GATED_HINT_KEYWORDS = (
+        "code",
+        "代码",
+        "bug",
+        "fix",
+        "实现",
+        "修改",
+        "refactor",
+        "ui",
+        "页面",
+        "界面",
+        "frontend",
+        "build",
+        "构建",
+        "test",
+        "测试",
+        "验证",
+        "multi-file",
+        "跨文件",
+        "long task",
+        "长任务",
+    )
+
+    def _review_gate_reason(bundle: dict[str, Any], *, backend: str, timeout_seconds: int) -> str:
+        if not review_required_default():
+            return ""
+        if int(timeout_seconds or 0) >= 900:
+            return f"timeout {int(timeout_seconds)}s reaches long-task threshold"
+        haystacks: list[str] = []
+        task = api.resolve_effective_task(bundle)
+        for value in (
+            task.get("summary") if isinstance(task, dict) else "",
+            task.get("description") if isinstance(task, dict) else "",
+            bundle.get("request"),
+            bundle.get("task_description"),
+        ):
+            text = str(value or "").strip().lower()
+            if text:
+                haystacks.append(text)
+        for text in haystacks:
+            if any(keyword in text for keyword in REVIEW_GATED_HINT_KEYWORDS):
+                return "task/request matches code/UI/build/test review keywords"
+        return ""
+
+    def require_reviewed_run_for_guarded_work(*, command_name: str, bundle: dict[str, Any], backend: str, timeout_seconds: int) -> None:
+        if command_name not in {"pm run", "pm start-work"}:
+            return
+        reason = _review_gate_reason(bundle, backend=backend, timeout_seconds=timeout_seconds)
+        if not reason:
+            return
+        blocked_command = command_name
+        if command_name == "pm start-work":
+            raise SystemExit(
+                blocked_command
+                + " blocked: reviewed gate required for this task; "
+                + reason
+                + ". Use `pm start-work --reviewed ...` (or `pm run-reviewed ...`) so review_required stays enabled."
+            )
+        raise SystemExit(
+            blocked_command
+            + " blocked: reviewed gate required for this task; "
+            + reason
+            + ". Use `pm run-reviewed ...` (or `pm start-work --reviewed ...`) so review_required stays enabled."
+        )
+
     def review_gate_enforced() -> bool:
         return bool(review_cfg().get("enforce_on_complete"))
 
@@ -1197,6 +1262,12 @@ def build_command_handlers(api: Any) -> dict[str, CommandHandler]:
         message = api.build_run_message(bundle)
         task = api.resolve_effective_task(bundle)
         task_id = str(task.get("task_id") or "").strip()
+        require_reviewed_run_for_guarded_work(
+            command_name=command_name,
+            bundle=bundle,
+            backend=backend,
+            timeout_seconds=timeout_seconds,
+        )
         label = api.build_run_label(api.project_root_path(), agent_id, task_id)
         backend_warnings: list[str] = []
         explicit_backend = bool(str(args.backend or "").strip())

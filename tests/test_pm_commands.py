@@ -225,6 +225,13 @@ class _FakeApi:
             "description": f"Repo：{self._repo_root}\n",
         }
 
+    def parse_task_summary(self, summary_text: str) -> dict:
+        text = str(summary_text or "").strip()
+        if text.startswith("[") and "]" in text:
+            task_id = text[1:text.index("]")].strip()
+            return {"task_id": task_id}
+        return {}
+
     def list_task_comments(self, task_guid: str, limit: int = 20) -> list[dict]:
         relevant = [content for guid, content in self.comments if guid == task_guid]
         return [{"content": item} for item in relevant[-limit:]]
@@ -624,6 +631,76 @@ class PmCommandsFallbackTest(unittest.TestCase):
         self.assertIsNotNone(api.last_written_payload)
         self.assertEqual(api.last_written_payload["monitor_status"], "dispatch-error")
         self.assertEqual(api.last_written_payload["execution_step"], "backend-dispatch-failed")
+
+    def test_cmd_run_blocks_guarded_work_and_requires_run_reviewed(self) -> None:
+        api = _FakeApi()
+        api.last_bundle = {
+            "current_task": {
+                "task_id": "T1",
+                "summary": "Implement UI build verification flow",
+                "description": "Need code changes across multiple files and test coverage.",
+            }
+        }
+        handlers = build_command_handlers(api)
+        args = argparse.Namespace(
+            task_id="T1",
+            task_guid="",
+            backend="codex-cli",
+            agent="codex",
+            timeout=120,
+            thinking="high",
+            session_key="main",
+        )
+
+        with self.assertRaises(SystemExit) as ctx:
+            handlers["run"](args)
+
+        message = str(ctx.exception)
+        self.assertIn("pm run blocked: reviewed gate required", message)
+        self.assertIn("pm run-reviewed", message)
+        self.assertEqual(api.codex_calls, 0)
+        self.assertEqual(api.spawn_calls, 0)
+
+    def test_cmd_start_work_blocks_guarded_work_without_reviewed_flag(self) -> None:
+        api = _FakeApi()
+        api.last_bundle = {
+            "current_task": {
+                "task_id": "T1",
+                "guid": "guid-T1",
+                "summary": "Implement UI build verification flow",
+                "description": "Need code changes across multiple files and test coverage.",
+            }
+        }
+        handlers = build_command_handlers(api)
+        args = argparse.Namespace(
+            task_id="T1",
+            task_guid="",
+            summary="",
+            request="",
+            repo_root="",
+            kind="",
+            tasklist_name="",
+            force_new=False,
+            comment="",
+            no_comment=True,
+            no_run=False,
+            reviewed=False,
+            backend="codex-cli",
+            agent="codex",
+            timeout=120,
+            thinking="high",
+            session_key="main",
+            include_completed=False,
+        )
+
+        with self.assertRaises(SystemExit) as ctx:
+            handlers["start_work"](args)
+
+        message = str(ctx.exception)
+        self.assertIn("pm start-work blocked: reviewed gate required", message)
+        self.assertIn("pm start-work --reviewed", message)
+        self.assertEqual(api.codex_calls, 0)
+        self.assertEqual(api.spawn_calls, 0)
 
     def test_cmd_run_reviewed_starts_monitor_for_acp(self) -> None:
         api = _FakeApi()
