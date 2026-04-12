@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from contextlib import contextmanager
@@ -1174,6 +1175,155 @@ def _find_cron_job(jobs: list[dict[str, Any]], job_id: str) -> dict[str, Any] | 
     return None
 
 
+def _normalize_session_status_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return {}
+    details = payload.get("details") if isinstance(payload.get("details"), dict) else {}
+    result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+    result_details = result.get("details") if isinstance(result.get("details"), dict) else {}
+    merged: dict[str, Any] = {}
+    merged.update(result)
+    merged.update(result_details)
+    merged.update(details)
+    merged.update(payload)
+    return merged
+
+
+def _coerce_session_terminal_state(payload: dict[str, Any]) -> dict[str, Any]:
+    data = _normalize_session_status_payload(payload)
+    status = str(data.get("status") or data.get("sessionStatus") or data.get("state") or "").strip().lower()
+    acp = data.get("acp") if isinstance(data.get("acp"), dict) else {}
+    acp_state = str(acp.get("state") or data.get("acpState") or "").strip().lower()
+    last_error = str(data.get("lastError") or acp.get("lastError") or data.get("error") or "").strip()
+    ended_at = str(data.get("endedAt") or data.get("finishedAt") or data.get("completedAt") or "").strip()
+    if acp_state in {"completed", "failed", "error", "cancelled"}:
+        status = acp_state
+    if status in {"error", "failed"}:
+        return {"terminal": True, "status": "failed", "summary": "failed", "error": last_error, "ended_at": ended_at}
+    if status in {"completed", "complete", "done", "success", "succeeded"}:
+        return {"terminal": True, "status": "completed", "summary": "completed", "error": "", "ended_at": ended_at}
+    if status in {"cancelled", "canceled", "killed", "terminated"}:
+        return {"terminal": True, "status": "failed", "summary": "cancelled", "error": last_error or "session cancelled", "ended_at": ended_at}
+    return {"terminal": False, "status": status, "summary": "", "error": last_error, "ended_at": ended_at}
+
+
+def _openclaw_home_path() -> Path:
+    explicit_home = str(os.environ.get("OPENCLAW_HOME") or "").strip()
+    if explicit_home:
+        return Path(explicit_home).expanduser()
+    return Path.home() / ".openclaw"
+
+
+def _local_agent_session_status(session_key: str) -> dict[str, Any]:
+    normalized_session_key = str(session_key or "").strip()
+    if not normalized_session_key:
+        return {}
+    openclaw_home = _openclaw_home_path()
+    candidate_paths: list[Path] = []
+    parts = normalized_session_key.split(":", 3)
+    if len(parts) >= 4 and parts[0] == "agent":
+        agent_id = str(parts[1] or "").strip()
+        if agent_id:
+            candidate_paths.append(openclaw_home / "agents" / agent_id / "sessions" / "sessions.json")
+    else:
+        candidate_paths.extend(sorted((openclaw_home / "agents").glob("*/sessions/sessions.json")))
+    for sessions_path in candidate_paths:
+        if not sessions_path.exists():
+            continue
+        try:
+            payload = json.loads(sessions_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        item = payload.get(normalized_session_key)
+        if not isinstance(item, dict):
+            continue
+        acp = item.get("acp") if isinstance(item.get("acp"), dict) else {}
+        return {
+            "ok": True,
+            "result": {
+                "details": {
+                    "sessionKey": normalized_session_key,
+                    "status": item.get("status") or "",
+                    "endedAt": item.get("endedAt") or "",
+                    "lastError": acp.get("lastError") or "",
+                    "acp": {
+                        "state": acp.get("state") or "",
+                        "lastError": acp.get("lastError") or "",
+                    },
+                    "source": "local-agent-session-registry",
+                    "sessionFile": item.get("sessionFile") or "",
+                }
+            },
+        }
+    return {}
+
+
+def _bridge_session_status(session_key: str) -> dict[str, Any]:
+    normalized_session_key = str(session_key or "").strip()
+    if not normalized_session_key:
+        return {}
+    try:
+        payload = run_bridge("session_status", "", {"sessionKey": normalized_session_key, "model": "default"}, session_key="main")
+    except Exception as exc:  # pragma: no cover - defensive guard for bridge/runtime failures
+        payload = {"ok": False, "error": str(exc), "sessionKey": normalized_session_key}
+    error_text = str(payload.get("error") or "").strip()
+    denied = "Agent-to-agent session status denied" in error_text or "agentToAgent.allow" in error_text
+    if denied or not payload.get("ok"):
+        local_payload = _local_agent_session_status(normalized_session_key)
+        if local_payload:
+            local_payload["fallback_reason"] = error_text or "bridge-unavailable"
+            return local_payload
+    return payload
+
+
+def _bridge_child_session_to_run(run_id: str, state: dict[str, Any], *, write: bool = True) -> dict[str, Any]:
+    watch_mode = str(state.get("watch_mode") or "").strip().lower()
+    child_session_key = str(state.get("child_session_key") or "").strip()
+    if watch_mode != "child-session" or not child_session_key:
+        return {"bridged": False, "terminal": False}
+    run_record = load_run_record(run_id)
+    if not isinstance(run_record, dict):
+        return {"bridged": False, "terminal": False}
+    if str(run_record.get("worker_done_at") or "").strip() or str(run_record.get("bridge_done_at") or "").strip():
+        return {"bridged": False, "terminal": True, "run_record": run_record}
+    bridge_payload = _bridge_session_status(child_session_key)
+    session_state = _coerce_session_terminal_state(bridge_payload)
+    state["child_session_status"] = bridge_payload
+    if not session_state.get("terminal"):
+        return {"bridged": False, "terminal": False, "session_state": session_state, "run_record": run_record}
+    now_text = now_iso()
+    ended_at = str(session_state.get("ended_at") or "").strip() or now_text
+    error_text = str(session_state.get("error") or "").strip()
+    summary = str(session_state.get("summary") or session_state.get("status") or "").strip() or "completed"
+    result_payload = run_record.get("result") if isinstance(run_record.get("result"), dict) else {}
+    result_payload = dict(result_payload)
+    result_payload["status"] = str(session_state.get("status") or "").strip() or result_payload.get("status") or ""
+    result_payload["summary"] = summary
+    if error_text:
+        result_payload["error"] = error_text
+    updated = dict(run_record)
+    updated["result"] = result_payload
+    updated["status"] = str(session_state.get("status") or "").strip() or str(updated.get("status") or "").strip()
+    updated["summary"] = summary
+    updated["worker_done_at"] = ended_at
+    updated["bridge_done_at"] = now_text
+    updated["execution_step"] = "worker-terminal-state-bridged"
+    updated["child_session_terminal_status"] = str(session_state.get("status") or "").strip()
+    updated["child_session_terminal_at"] = ended_at
+    if error_text:
+        updated["error"] = error_text
+        updated["child_session_error"] = error_text
+    if write:
+        write_pm_run_record(updated, run_id=run_id)
+    state["child_session_terminal_status"] = str(session_state.get("status") or "").strip()
+    state["child_session_terminal_at"] = ended_at
+    state["child_session_bridge_done_at"] = now_text
+    state["child_session_bridge_status"] = "bridged"
+    return {"bridged": True, "terminal": True, "session_state": session_state, "run_record": updated}
+
+
 def refresh_run_monitor(run_id: str, *, write: bool = True) -> dict[str, Any]:
     state = load_monitor_state(run_id)
     if not isinstance(state, dict):
@@ -1181,6 +1331,10 @@ def refresh_run_monitor(run_id: str, *, write: bool = True) -> dict[str, Any]:
     current_status = str(state.get("status") or "").strip()
     if current_status in {"not-applicable", "stopped"}:
         return {"status": current_status or "ok", "monitor": state}
+    bridge_result = _bridge_child_session_to_run(run_id, state, write=write)
+    if bridge_result.get("bridged"):
+        state["status"] = "active"
+        state["status_reason"] = "child-session-terminal-bridged"
     cron_job_id = str(state.get("cron_job_id") or "").strip()
     if not cron_job_id:
         state["status"] = "cron-error"
@@ -1209,6 +1363,9 @@ def refresh_run_monitor(run_id: str, *, write: bool = True) -> dict[str, Any]:
         state["status_reason"] = "cron-job-missing"
         if str(state.get("kickoff_status") or "").strip() == "pending":
             state["kickoff_status"] = "skipped-no-cron"
+    if bridge_result.get("bridged"):
+        state["status"] = "active"
+        state["status_reason"] = "child-session-terminal-bridged"
     if write:
         write_monitor_state(state)
     return {"status": str(state.get("status") or "").strip() or "unknown", "monitor": state}

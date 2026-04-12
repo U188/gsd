@@ -153,6 +153,10 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertTrue(payload["created"])
             self.assertEqual(payload["dispatch"]["task_id"], "T1")
             self.assertEqual(payload["dispatch"]["review_status"], "pending")
+            self.assertTrue(payload["dispatch"]["run_id"])
+            self.assertEqual(payload["dispatch"]["execution_phase"], "monitor")
+            self.assertIn(f"run_id: {payload['dispatch']['run_id']}", payload["kickoff_comment"]["content"])
+            self.assertIn("monitor_status:", payload["kickoff_comment"]["content"])
             self.assertIn("显式 task 绑定已建立", payload["kickoff_comment"]["content"])
             self.assertEqual(payload["current_task"]["task_id"], "T1")
 
@@ -160,7 +164,7 @@ class PmLocalCliTest(unittest.TestCase):
                 self._run_pm(root, config_path, env, "get", "--task-id", "T1").stdout
             )
             comments = task_detail.get("comments") or []
-            self.assertTrue(any("显式 task 绑定已建立" in str(item.get("content") or "") for item in comments))
+            self.assertTrue(any(f"run_id: {payload['dispatch']['run_id']}" in str(item.get("content") or "") for item in comments))
 
     def test_install_assets_copies_repo_runtime_assets(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -395,10 +399,14 @@ class PmLocalCliTest(unittest.TestCase):
                 "T1",
                 "--verdict",
                 "pass",
+                "--evidence",
+                "pytest -q -> 3 passed",
                 "--reviewer",
                 "qa",
             )
             self.assertEqual(passed_review["review_status"], "passed")
+            self.assertEqual(passed_review["verification_status"], "verified")
+            self.assertIn("pytest -q -> 3 passed", passed_review["verification_evidence"])
             self.assertEqual(len(passed_review["review_history"]), 2)
 
             completed = run_ok("complete", "--task-id", "T1", "--content", "done after pass")
@@ -543,6 +551,138 @@ class PmLocalCliTest(unittest.TestCase):
             self.assertEqual(run_record["monitor_status"], "cron-error")
             self.assertEqual(run_record["monitor"]["status"], "cron-error")
 
+    def test_monitor_status_bridges_failed_child_session_into_run_record(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            def run_ok(*args: str) -> dict:
+                proc = self._run_pm(root, config_path, env, *args)
+                return json.loads(proc.stdout)
+
+            run_ok("create", "--summary", "ACP bridge failed child")
+            first_run = run_ok("run-reviewed", "--task-id", "T1", "--backend", "acp", "--agent", "codex")
+            child_key = first_run["monitor"]["child_session_key"]
+            bridge_state = self._bridge_log(root)
+            bridge_state.setdefault("session_statuses", {})[child_key] = {
+                "ok": True,
+                "result": {
+                    "details": {
+                        "sessionKey": child_key,
+                        "status": "failed",
+                        "endedAt": "2026-04-12T01:00:00Z",
+                        "lastError": "acpx exited with code 1",
+                        "acp": {"state": "error"},
+                    }
+                },
+            }
+            (root / ".pm" / "fake-bridge-log.json").write_text(json.dumps(bridge_state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            monitor_status = run_ok("monitor-status", "--run-id", first_run["run_id"])
+            self.assertEqual(monitor_status["monitor"]["child_session_bridge_status"], "bridged")
+            self.assertEqual(monitor_status["monitor"]["child_session_terminal_status"], "failed")
+
+            run_record = json.loads((root / ".pm" / "runs" / f"{first_run['run_id']}.json").read_text(encoding="utf-8"))
+            self.assertEqual(run_record["execution_step"], "worker-terminal-state-bridged")
+            self.assertEqual(run_record["child_session_terminal_status"], "failed")
+            self.assertEqual(run_record["error"], "acpx exited with code 1")
+            self.assertTrue(run_record["worker_done_at"])
+            self.assertTrue(run_record["bridge_done_at"])
+
+    def test_monitor_status_falls_back_to_local_agent_session_registry_when_bridge_denied(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+            openclaw_home = root / ".openclaw"
+            sessions_dir = openclaw_home / "agents" / "codex" / "sessions"
+            sessions_dir.mkdir(parents=True, exist_ok=True)
+            env["OPENCLAW_HOME"] = str(openclaw_home)
+
+            def run_ok(*args: str) -> dict:
+                proc = self._run_pm(root, config_path, env, *args)
+                return json.loads(proc.stdout)
+
+            run_ok("create", "--summary", "ACP local registry fallback")
+            first_run = run_ok("run-reviewed", "--task-id", "T1", "--backend", "acp", "--agent", "codex")
+            child_key = first_run["monitor"]["child_session_key"]
+
+            bridge_state = self._bridge_log(root)
+            bridge_state.setdefault("session_statuses", {})[child_key] = {
+                "ok": False,
+                "error": "Agent-to-agent session status denied by tools.agentToAgent.allow.",
+            }
+            (root / ".pm" / "fake-bridge-log.json").write_text(json.dumps(bridge_state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            (sessions_dir / "sessions.json").write_text(
+                json.dumps(
+                    {
+                        child_key: {
+                            "status": "failed",
+                            "endedAt": "2026-04-12T01:02:00Z",
+                            "sessionFile": str(sessions_dir / "child.jsonl"),
+                            "acp": {"state": "error", "lastError": "acpx exited with code 1"},
+                        }
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+
+            monitor_status = run_ok("monitor-status", "--run-id", first_run["run_id"])
+            self.assertEqual(monitor_status["monitor"]["child_session_bridge_status"], "bridged")
+            self.assertEqual(monitor_status["monitor"]["child_session_terminal_status"], "failed")
+
+            run_record = json.loads((root / ".pm" / "runs" / f"{first_run['run_id']}.json").read_text(encoding="utf-8"))
+            self.assertEqual(run_record["execution_step"], "worker-terminal-state-bridged")
+            self.assertEqual(run_record["child_session_terminal_status"], "failed")
+            self.assertEqual(run_record["error"], "acpx exited with code 1")
+            self.assertTrue(run_record["worker_done_at"])
+            self.assertTrue(run_record["bridge_done_at"])
+
+    def test_monitor_advance_does_not_wait_forever_after_child_session_bridge(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path, env = self._build_monitor_cli_harness(root)
+
+            def run_ok(*args: str) -> dict:
+                proc = self._run_pm(root, config_path, env, *args)
+                return json.loads(proc.stdout)
+
+            run_ok("create", "--summary", "ACP advance after failed child")
+            first_run = run_ok("run-reviewed", "--task-id", "T1", "--backend", "acp", "--agent", "codex")
+            child_key = first_run["monitor"]["child_session_key"]
+            bridge_state = self._bridge_log(root)
+            bridge_state.setdefault("session_statuses", {})[child_key] = {
+                "ok": True,
+                "result": {
+                    "details": {
+                        "sessionKey": child_key,
+                        "status": "failed",
+                        "endedAt": "2026-04-12T01:00:00Z",
+                        "lastError": "acpx exited with code 1",
+                        "acp": {"state": "error"},
+                    }
+                },
+            }
+            bridge_state.setdefault("agent_turn_responses", []).append(
+                {
+                    "status": "ok",
+                    "result": {
+                        "payloads": [
+                            {
+                                "text": '{"verdict":"fail","feedback":"worker failed after child session bridge","summary":"terminal child session failure propagated","confidence":"high","evidence":["child session status=failed"]}'
+                            }
+                        ]
+                    },
+                }
+            )
+            (root / ".pm" / "fake-bridge-log.json").write_text(json.dumps(bridge_state, ensure_ascii=False, indent=2), encoding="utf-8")
+
+            advanced = run_ok("monitor-advance", "--run-id", first_run["run_id"])
+            self.assertNotEqual(advanced["status"], "waiting-for-terminal-run-state")
+            self.assertEqual(advanced["review_status"], "failed")
+
     def test_rerun_stops_previous_monitor_before_starting_new_one(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -572,7 +712,7 @@ class PmLocalCliTest(unittest.TestCase):
 
             run_ok("create", "--summary", "Monitor complete task")
             run_ok("run-reviewed", "--task-id", "T1", "--backend", "acp", "--agent", "codex")
-            run_ok("review", "--task-id", "T1", "--verdict", "pass", "--reviewer", "qa")
+            run_ok("review", "--task-id", "T1", "--verdict", "pass", "--evidence", "pytest -q -> 3 passed", "--reviewer", "qa")
             completed = run_ok("complete", "--task-id", "T1", "--content", "done after pass")
             self.assertEqual(completed["monitor_stop"]["status"], "stopped")
             last_run = json.loads((root / ".pm" / "last-run.json").read_text(encoding="utf-8"))
@@ -592,7 +732,7 @@ class PmLocalCliTest(unittest.TestCase):
 
             run_ok("create", "--summary", "Codex monitor complete task")
             run_ok("run-reviewed", "--task-id", "T1", "--backend", "codex-cli", "--agent", "codex")
-            run_ok("review", "--task-id", "T1", "--verdict", "pass", "--reviewer", "qa")
+            run_ok("review", "--task-id", "T1", "--verdict", "pass", "--evidence", "pytest -q -> 3 passed", "--reviewer", "qa")
             completed = run_ok("complete", "--task-id", "T1", "--content", "done after pass")
             self.assertEqual(completed["monitor_stop"]["status"], "stopped")
             last_run = json.loads((root / ".pm" / "last-run.json").read_text(encoding="utf-8"))
@@ -663,7 +803,7 @@ class PmLocalCliTest(unittest.TestCase):
             run_ok("create", "--summary", "Complete task one")
             run_ok("create", "--summary", "Complete task two")
             first_run = run_ok("run-reviewed", "--task-id", "T1", "--backend", "codex-cli", "--agent", "codex")
-            run_ok("review", "--task-id", "T1", "--verdict", "pass", "--reviewer", "qa")
+            run_ok("review", "--task-id", "T1", "--verdict", "pass", "--evidence", "pytest -q -> 3 passed", "--reviewer", "qa")
             second_run = run_ok("run-reviewed", "--task-id", "T2", "--backend", "codex-cli", "--agent", "codex")
 
             completed = run_ok("complete", "--task-id", "T1", "--content", "done after pass")

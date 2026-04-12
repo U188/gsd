@@ -45,6 +45,28 @@ def main() -> int:
         print(json.dumps({"status": "ok", "result": {"details": {"childSessionKey": "child-1", "runId": "run-acp-1"}}}, ensure_ascii=False))
         return 0
 
+    if ns.tool == "openclaw" and ns.action == "run_agent":
+        responses = state.setdefault("agent_turn_responses", [])
+        if responses:
+            response = responses.pop(0)
+            state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            print(json.dumps(response, ensure_ascii=False))
+            return 0
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(json.dumps({"status": "ok", "result": {"payloads": [{"text": "{\"verdict\":\"pass\",\"feedback\":\"default fake reviewer pass\",\"summary\":\"fake bridge default verdict\",\"confidence\":\"high\",\"evidence\":[\"default reviewer evidence\"]}"}]}}, ensure_ascii=False))
+        return 0
+
+    if ns.tool == "session_status":
+        session_key = str(payload.get("sessionKey") or "")
+        statuses = state.setdefault("session_statuses", {})
+        session_payload = statuses.get(session_key)
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        if isinstance(session_payload, dict):
+            print(json.dumps(session_payload, ensure_ascii=False))
+        else:
+            print(json.dumps({"ok": True, "result": {"details": {"sessionKey": session_key, "status": "running"}}}, ensure_ascii=False))
+        return 0
+
     if ns.tool == "cron" and ns.action == "add":
         job_id = f"job-{state.get('next_job_id', 1)}"
         state["next_job_id"] = int(state.get("next_job_id", 1)) + 1
