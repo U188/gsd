@@ -63,6 +63,26 @@ class PmRuntimeTest(unittest.TestCase):
                 stderr="",
             )
             result = run_openclaw_agent(
+                agent_id="worker",
+                message="Reply with OK",
+                cwd="/tmp",
+                timeout_seconds=120,
+                session_id="worker",
+                bin_path_fn=lambda: Path("/usr/bin/openclaw"),
+                env_fn=lambda **_: {"PATH": "/usr/bin"},
+            )
+        self.assertEqual(result["status"], "ok")
+        cmd = mocked_run.call_args.args[0]
+        self.assertIn("--session-id", cmd)
+        idx = cmd.index("--session-id") + 1
+        self.assertTrue(cmd[idx].startswith("pm-openclaw-worker-"))
+        self.assertNotEqual(cmd[idx], "worker")
+        self.assertEqual(mocked_run.call_args.kwargs["timeout"], 150)
+
+    def test_run_openclaw_agent_rejects_self_targeting_main(self) -> None:
+        """agent=main is rejected before subprocess to prevent self-targeting."""
+        with self.assertRaises(SystemExit) as ctx:
+            run_openclaw_agent(
                 agent_id="main",
                 message="Reply with OK",
                 cwd="/tmp",
@@ -71,24 +91,18 @@ class PmRuntimeTest(unittest.TestCase):
                 bin_path_fn=lambda: Path("/usr/bin/openclaw"),
                 env_fn=lambda **_: {"PATH": "/usr/bin"},
             )
-        self.assertEqual(result["status"], "ok")
-        cmd = mocked_run.call_args.args[0]
-        self.assertIn("--session-id", cmd)
-        idx = cmd.index("--session-id") + 1
-        self.assertTrue(cmd[idx].startswith("pm-openclaw-main-"))
-        self.assertNotEqual(cmd[idx], "main")
-        self.assertEqual(mocked_run.call_args.kwargs["timeout"], 150)
+        self.assertIn("openclaw backend refuses agent=main", str(ctx.exception))
 
     def test_run_openclaw_agent_reports_subprocess_timeout(self) -> None:
         with mock.patch("pm_runtime.subprocess.run") as mocked_run:
             mocked_run.side_effect = subprocess.TimeoutExpired(cmd=["openclaw"], timeout=150)
             with self.assertRaises(SystemExit) as ctx:
                 run_openclaw_agent(
-                    agent_id="main",
+                    agent_id="worker",
                     message="Reply with OK",
                     cwd="/tmp",
                     timeout_seconds=120,
-                    session_id="main",
+                    session_id="pm-worker-1",
                     bin_path_fn=lambda: Path("/usr/bin/openclaw"),
                     env_fn=lambda **_: {"PATH": "/usr/bin"},
                 )

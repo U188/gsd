@@ -24,12 +24,12 @@ class PmBridgeTest(unittest.TestCase):
         self.assertEqual(resolved, repo_script)
 
     def test_build_run_label_is_unique_per_call(self) -> None:
-        root = Path("/tmp/openclaw-coding-kit")
+        root = Path("/tmp/gsd")
         label_a = build_run_label(root, "codex", "T2")
         label_b = build_run_label(root, "codex", "T2")
         self.assertNotEqual(label_a, label_b)
-        self.assertTrue(label_a.startswith("pm-openclaw-coding-kit-codex-t2-"))
-        self.assertTrue(label_b.startswith("pm-openclaw-coding-kit-codex-t2-"))
+        self.assertTrue(label_a.startswith("pm-gsd-codex-t2-"))
+        self.assertTrue(label_b.startswith("pm-gsd-codex-t2-"))
 
     def test_spawn_acp_session_requests_inherited_sandbox(self) -> None:
         captured: dict[str, object] = {}

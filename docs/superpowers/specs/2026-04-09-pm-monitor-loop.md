@@ -1,7 +1,7 @@
 # PM Worker Monitor Loop Spec
 
 ## 背景
-当前 `openclaw-coding-kit` 已经有 `run-reviewed -> review -> rerun -> complete` 的审核闭环，但还没有稳定的“监工闭环”。
+当前 `gsd` 已经有 `run-reviewed -> review -> rerun -> complete` 的审核闭环，但还没有稳定的“监工闭环”。
 
 缺口在于：
 - worker 异步执行期间，没有机器可读的巡检状态

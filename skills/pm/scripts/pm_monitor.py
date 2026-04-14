@@ -58,10 +58,10 @@ def build_user_visible_followup_job(
         raise ValueError("follow-up job name is required")
     if not normalized_message:
         raise ValueError("follow-up job message is required")
-    delivery_mode = "announce" if normalized_channel or normalized_to else "none"
-    delivery: dict[str, Any] = {"mode": delivery_mode, "bestEffort": bool(best_effort)}
     normalized_channel = str(channel or "").strip()
     normalized_to = str(to or "").strip()
+    delivery_mode = "announce" if normalized_channel or normalized_to else "none"
+    delivery: dict[str, Any] = {"mode": delivery_mode, "bestEffort": bool(best_effort)}
     if normalized_channel:
         delivery["channel"] = normalized_channel
     if normalized_to:

@@ -12,7 +12,7 @@ except ImportError:  # Python 3.8 fallback
 
 TZ = ZoneInfo("Asia/Shanghai")
 STATE_DIR_ENV_VARS = ("PM_STATE_DIR", "OPENCLAW_PM_STATE_DIR")
-STATE_DIR_NAME = "openclaw-coding-kit"
+STATE_DIR_NAME = "gsd"
 LEGACY_STATE_DIR_NAME = "openclaw-pm-coder-kit"
 
 

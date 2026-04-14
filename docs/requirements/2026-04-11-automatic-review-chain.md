@@ -3,7 +3,7 @@
 - 日期：2026-04-11
 - 模式：autonomous
 - 关联任务：T8
-- Repo：`/root/openclaw-coding-kit`
+- Repo：`/root/gsd`
 
 ## 目标
 把当前 `pm run-reviewed -> pm review --verdict pass|fail -> pm rerun / pm complete` 的**人工 review gate**升级成**机制化全自动闭环**，使受管执行链在 worker 完成后可自动完成审查、落盘 verdict、触发 rerun 或 complete，并自动收口 monitor，不再依赖操作者手工执行 `pm review`。

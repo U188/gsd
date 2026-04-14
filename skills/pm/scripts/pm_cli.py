@@ -364,11 +364,11 @@ def build_parser(*, handlers: dict[str, Any]) -> argparse.ArgumentParser:
     upload_attachments.add_argument("--file", action="append", default=[])
     upload_attachments.set_defaults(func=handlers["upload_attachments"])
     # ── monitor-poll-all: cron-driven ──
-    p_poll_all = subparsers.add_parser("monitor-poll-all", help="Cron-friendly: advance all active runs")
+    p_poll_all = sub.add_parser("monitor-poll-all", help="Cron-friendly: advance all active runs")
     p_poll_all.set_defaults(func=lambda args: _run_and_print(pm_commands.cmd_monitor_poll_all, args))
 
     # ── run-auto: full pipeline ──
-    p_run_auto = subparsers.add_parser("run-auto", help="Full-auto pipeline: dispatch → poll → review → complete/retry")
+    p_run_auto = sub.add_parser("run-auto", help="Full-auto pipeline: dispatch → poll → review → complete/retry")
     p_run_auto.add_argument("--task-id", required=True)
     p_run_auto.add_argument("--backend", default="openclaw")
     p_run_auto.add_argument("--agent", default="main")

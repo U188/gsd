@@ -94,8 +94,8 @@ class PmMonitorTest(unittest.TestCase):
         self.assertEqual(state["continuation_contract"]["progress_updates_are_terminal"], False)
         self.assertEqual(state["reporting_contract"]["delivery_mode"], "none")
         self.assertEqual(state["reporting_contract"]["payload_kind"], "agentTurn")
-        self.assertEqual(state["kickoff_enabled"], False)
-        self.assertEqual(state["kickoff_status"], "disabled")
+        self.assertEqual(state["kickoff_enabled"], True)
+        self.assertEqual(state["kickoff_status"], "pending")
         self.assertTrue(str(state["monitor_path"]).endswith(".pm/monitors/run-1.json"))
 
     def test_build_monitor_prompt_points_to_run_and_monitor_records(self) -> None:

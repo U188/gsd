@@ -1,6 +1,6 @@
 # OpenClaw Coding Kit
 
-[![Repository](https://img.shields.io/badge/GitHub-openclaw--coding--kit-181717?logo=github)](https://github.com/GalaxyXieyu/openclaw-coding-kit)
+[![Repository](https://img.shields.io/badge/GitHub-openclaw--coding--kit-181717?logo=github)](https://github.com/GalaxyXieyu/gsd)
 ![Python](https://img.shields.io/badge/python-%3E%3D3.9-3776AB?logo=python&logoColor=white)
 ![Node.js](https://img.shields.io/badge/node-%3E%3D22-5FA04E?logo=node.js&logoColor=white)
 ![OpenClaw](https://img.shields.io/badge/openclaw-2026.3.22-0F172A)
@@ -11,7 +11,7 @@
 `OpenClaw Coding Kit` is not a one-off demo scaffold.  
 It packages a repeatable working model for complex delivery: requirement intake, task routing, coding execution, progress relay, and optional Feishu synchronization.
 
-![OpenClaw Coding Kit Architecture](./diagrams/openclaw-coding-kit-architecture.svg)
+![OpenClaw Coding Kit Architecture](./diagrams/gsd-architecture.svg)
 
 ## Why This Exists
 
@@ -73,8 +73,8 @@ flowchart LR
 
 Editable diagram sources:
 
-- [`diagrams/openclaw-coding-kit-architecture.svg`](./diagrams/openclaw-coding-kit-architecture.svg)
-- [`diagrams/openclaw-coding-kit-architecture.drawio`](./diagrams/openclaw-coding-kit-architecture.drawio)
+- [`diagrams/gsd-architecture.svg`](./diagrams/gsd-architecture.svg)
+- [`diagrams/gsd-architecture.drawio`](./diagrams/gsd-architecture.drawio)
 
 ## Operating Modes
 
@@ -208,7 +208,7 @@ It keeps runtime problems, config problems, and collaboration-system problems fr
 ## Repository Layout
 
 ```text
-openclaw-coding-kit/
+gsd/
   README.md
   INSTALL.md
   examples/
@@ -222,8 +222,8 @@ openclaw-coding-kit/
     pm/
   tests/
   diagrams/
-    openclaw-coding-kit-architecture.drawio
-    openclaw-coding-kit-architecture.svg
+    gsd-architecture.drawio
+    gsd-architecture.svg
 ```
 
 ## Design Principles
@@ -256,7 +256,7 @@ Detailed install and permission guidance:
 | Python | `>= 3.9` |
 | Node.js | `>= 22` |
 | OpenClaw | `2026.3.22` |
-| PM state dir | prefers `openclaw-coding-kit`, still falls back to legacy `openclaw-pm-coder-kit` |
+| PM state dir | prefers `gsd`, still falls back to legacy `openclaw-pm-coder-kit` |
 
 ## Included References
 

@@ -3,7 +3,7 @@
 - 关联需求：`docs/requirements/2026-04-11-automatic-review-chain.md`
 - 关联任务：T8
 - 执行等级：L
-- Repo：`/root/openclaw-coding-kit`
+- Repo：`/root/gsd`
 
 ## 主状态源
 1. `.pm/runs/<run_id>.json`

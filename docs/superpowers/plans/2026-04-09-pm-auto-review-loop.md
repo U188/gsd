@@ -1,7 +1,7 @@
 # 2026-04-09 PM Auto Review Loop
 
 ## 背景
-主人要求把 `openclaw-coding-kit` 的执行链改成稳定机制：
+主人要求把 `gsd` 的执行链改成稳定机制：
 - 实施工作默认派给 worker 去做
 - 主会话/前台只负责审核
 - 审核不通过时，自动把问题打回给 worker 重做
